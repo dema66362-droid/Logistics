@@ -227,6 +227,7 @@ document.addEventListener('click',async e=>{
  }catch(err){errorToast(err)}
 });
 document.addEventListener('input',e=>{
+ if(e.target.matches('input[type=email]')&&/^mailto:/i.test(e.target.value.trim()))e.target.value=e.target.value.trim().replace(/^mailto:/i,'');
  const f=e.target.closest('#newForm');if(f){const el=e.target;if(['budget','tariffPerTon','tons'].includes(el.name)){
  const tons=Number(f.elements.tons.value)||0,rate=f.elements.tariffPerTon,budget=f.elements.budget;
  if(el.name==='budget'){f.dataset.priceTouched='1';rate.value=tons?Math.round((Number(budget.value)||0)/tons):''}
