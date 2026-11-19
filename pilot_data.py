@@ -33,7 +33,7 @@ def create_pilot_data(passwords: str | dict[str, str]) -> bool:
         ]
         for email, label, role, org in accounts:
             pw = passwords[email] if isinstance(passwords, dict) else passwords
-            u=User(org_id=org.id, email=email, name=label, role=role, password_hash=pass_hash(pw))
+            u=User(org_id=org.id, email=email, name=label, role=role, is_admin=role!='driver', password_hash=pass_hash(pw))
             db.add(u); db.flush()
             if role=='driver': db.add(Driver(org_id=org.id, user_id=u.id, name=label))
         db.add_all([

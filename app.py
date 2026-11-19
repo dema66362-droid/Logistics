@@ -8,6 +8,7 @@ import hmac
 import io
 import math
 import os
+import re
 import secrets
 import threading
 import time
@@ -35,7 +36,7 @@ if DB_URL.startswith('postgres://'):
 # SQLAlchemy 2.1 defaults to psycopg 3; this release installs psycopg2.
 if DB_URL.startswith('postgresql://'):
     DB_URL = 'postgresql+psycopg2://' + DB_URL[len('postgresql://'):]
-VERSION = '2.7.0'
+VERSION = '2.8.0'
 BUSINESS_TZ = ZoneInfo(os.environ.get('LOGISTIK_TIMEZONE', 'Europe/Moscow'))
 
 def business_today():
@@ -84,6 +85,22 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20))
     password_hash: Mapped[str] = mapped_column(String(200))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class ParticipantInvitation(Base):
+    __tablename__ = 'participant_invitations'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sender_user_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    sender_org_id: Mapped[int] = mapped_column(ForeignKey('organizations.id'))
+    kind: Mapped[str] = mapped_column(String(20))
+    target_email: Mapped[str] = mapped_column(String(180))
+    target_role: Mapped[str] = mapped_column(String(20))
+    target_user_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'), nullable=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default='pending')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 class WebSession(Base):
     __tablename__ = 'web_sessions'
@@ -207,7 +224,7 @@ def initialize_schema():
             conn.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': PILOT_WRITE_LOCK})
         Base.metadata.create_all(conn)
         latest = conn.scalar(select(func.max(SchemaMigration.version)))
-        if latest and latest > '0027':
+        if latest and latest > '0028':
             raise RuntimeError('Database schema is newer than this application release')
         for table, definitions in {
             'shipments': {'pickup_address':"VARCHAR(300) NOT NULL DEFAULT ''",'delivery_address':"VARCHAR(300) NOT NULL DEFAULT ''",'recipient_contact':"VARCHAR(200) NOT NULL DEFAULT ''",'terms':"TEXT NOT NULL DEFAULT ''",'terms_version':'INTEGER NOT NULL DEFAULT 1','public_external':'BOOLEAN NOT NULL DEFAULT 0','search_launched':'BOOLEAN NOT NULL DEFAULT 0','tariff_source':"VARCHAR(30) NOT NULL DEFAULT 'manual'"},
@@ -220,6 +237,12 @@ def initialize_schema():
                     conn.exec_driver_sql(f'ALTER TABLE {table} ADD COLUMN {col} {defn}')
         if not conn.scalar(select(SchemaMigration.version).where(SchemaMigration.version == '0027')):
             conn.execute(SchemaMigration.__table__.insert().values(version='0027', applied_at=datetime.now(timezone.utc)))
+        if 'is_admin' not in {c['name'] for c in inspect(conn).get_columns('users')}:
+            default = '0' if IS_SQLITE else 'FALSE'
+            conn.exec_driver_sql('ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT ' + default)
+            conn.execute(text("UPDATE users SET is_admin = :yes WHERE role IN ('shipper','carrier')"), {'yes': True})
+        if not conn.scalar(select(SchemaMigration.version).where(SchemaMigration.version == '0028')):
+            conn.execute(SchemaMigration.__table__.insert().values(version='0028', applied_at=datetime.now(timezone.utc)))
 
 initialize_schema()
 app = FastAPI(title='Логистик MVP', docs_url=None, redoc_url=None, openapi_url=None)
@@ -318,7 +341,7 @@ def user_session(request: Request, logistik_session: str | None = Cookie(None)):
         if not user or not user.active:
             raise HTTPException(401, detail='Доступ закрыт')
         return dict(id=user.id, org_id=user.org_id, role=user.role, name=user.name,
-                    email=user.email, csrf=websession.csrf)
+                    email=user.email, is_admin=user.is_admin, csrf=websession.csrf)
 
 class CarrierSignup(BaseModel):
     organization: str = Field(min_length=3,max_length=160)
@@ -330,19 +353,9 @@ class CarrierSignup(BaseModel):
     vehicle_label: str = Field(min_length=3,max_length=100)
 
 @app.post('/api/signup/carrier',status_code=201)
-def register_carrier(payload:CarrierSignup, request:Request):
-    if os.environ.get('LOGISTIK_ALLOW_SIGNUP','0')!='1': forbidden('Самостоятельная регистрация пока не открыта')
-    origin=request.headers.get('origin')
-    if origin and origin.rstrip('/')!=str(request.base_url).rstrip('/'):forbidden('Недопустимый источник')
-    email=payload.email.strip().lower()
-    if '@' not in email or '\n' in email:invalid('Некорректная почта',422)
-    if any(ord(c)<32 for c in payload.organization+payload.name+payload.vehicle_label):invalid('Некорректное название',422)
-    with db_write() as db:
-        if db.scalar(select(User.id).where(User.email==email)):invalid('Этот адрес уже зарегистрирован',409)
-        org=Organization(name=payload.organization.strip(),kind='carrier');db.add(org);db.flush()
-        db.add(User(org_id=org.id,email=email,name=payload.name.strip(),role='carrier',password_hash=pass_hash(payload.password)))
-        db.add(Vehicle(org_id=org.id,label=payload.vehicle_label.strip(),kind=payload.vehicle_kind,capacity=payload.capacity_tons))
-    return {'ok':True,'message':'Зарегистрирован тестовый кабинет перевозчика. Доступ к закрытым заявкам требует согласия заказчика.'}
+def register_carrier(payload:CarrierSignup, request:Request, response:Response):
+    # Preserve clients of the previous carrier-only API.
+    return register_account(Signup(role='carrier', **payload.model_dump()), request, response)
 
 class LoginIn(BaseModel):
     email: str = Field(min_length=3, max_length=180)
@@ -356,7 +369,7 @@ def login(payload: LoginIn, request: Request, response: Response):
     origin = request.headers.get('origin')
     if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
         forbidden('Источник входа не совпадает с адресом сайта')
-    email = payload.email.strip().lower()
+    email = payload.email.strip().removeprefix('mailto:').lower()
     host = request.client.host if request.client else 'unknown'
     keys = [(sha_token('ip:' + host), 40), (sha_token('account:' + email), 8)]
     now = datetime.now(timezone.utc)
@@ -497,7 +510,7 @@ def get_state(user=Depends(user_session)):
             shipments += [s for s in public if s.id not in keys and public_visible(db,s,user['org_id'])]
             shipments=list({s.id:s for s in shipments}.values())
             offers=db.scalars(select(Offer).where(Offer.carrier_id==user['org_id'])).all()
-            drivers=db.scalars(select(Driver).where(Driver.org_id==user['org_id'])).all()
+            drivers=db.scalars(select(Driver).join(User,User.id==Driver.user_id).where(Driver.org_id==user['org_id'],User.active.is_(True))).all()
             vehicles=db.scalars(select(Vehicle).where(Vehicle.org_id==user['org_id'])).all()
         elif user['role']=='driver':
             driver=db.scalar(select(Driver).where(Driver.user_id==user['id']))
@@ -950,12 +963,12 @@ class AddDriver(BaseModel):
 @app.post('/api/carrier/drivers',status_code=201)
 def add_driver(payload:AddDriver,request:Request,user=Depends(user_session)):
     protect_csrf(request,user['csrf'])
-    if user['role']!='carrier':forbidden()
-    email=payload.email.strip().lower()
-    if '@' not in email:invalid('Некорректная почта',422)
+    if user['role']!='carrier' or not user['is_admin']:forbidden()
+    email=normalize_email(payload.email)
+    clean_name=clean_label(payload.name,2)
     with db_write() as db:
         if db.scalar(select(User.id).where(User.email==email)):invalid('Пользователь уже зарегистрирован')
-        u=User(org_id=user['org_id'],name=payload.name.strip(),role='driver',email=email,password_hash=pass_hash(payload.password))
+        u=User(org_id=user['org_id'],name=clean_name,role='driver',email=email,password_hash=pass_hash(payload.password),is_admin=False)
         db.add(u);db.flush()
         d=Driver(org_id=user['org_id'],user_id=u.id,name=u.name)
         db.add(d);db.flush()
@@ -1015,6 +1028,282 @@ def export_csv(user=Depends(user_session)):
         data='\ufeff'+output.getvalue()
     return Response(data,media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="logistik_orders.csv"','Cache-Control':'no-store'})
 
+def normalize_email(value: str) -> str:
+    value = value.strip()
+    if value.lower().startswith('mailto:'): value = value[7:]
+    value = value.lower()
+    local, sep, domain = value.rpartition('@')
+    if (not sep or len(value)>180 or not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+", local)
+            or local.startswith('.') or local.endswith('.') or '..' in local
+            or not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}', domain)):
+        invalid('Укажите почту без пробелов и лишних символов', 422)
+    return value
+
+def clean_label(value: str, minimum: int = 2) -> str:
+    value = value.strip()
+    if len(value)<minimum or any(ord(c)<32 for c in value): invalid('Проверьте название или имя', 422)
+    return value
+
+def same_origin(request: Request):
+    origin=request.headers.get('origin')
+    if origin and origin.rstrip('/')!=str(request.base_url).rstrip('/'): forbidden('Недопустимый источник запроса')
+
+def consume_action(key: str, limit: int, minutes: int = 60):
+    """Commit the durable throttle even if the subsequent operation is rejected."""
+    now=datetime.now(timezone.utc); denied=False; key=sha_token(key)
+    with db_write() as db:
+        bucket=db.get(LoginThrottle,key)
+        if bucket and bucket.expires.replace(tzinfo=timezone.utc)<=now:
+            db.delete(bucket);db.flush();bucket=None
+        if bucket and bucket.failures>=limit: denied=True
+        elif bucket: bucket.failures+=1
+        else: db.add(LoginThrottle(key=key,failures=1,expires=now+timedelta(minutes=minutes)))
+    if denied: raise HTTPException(429,detail='Слишком много запросов. Повторите позже')
+
+class Signup(BaseModel):
+    role: Literal['shipper','carrier','driver']
+    name: str = Field(min_length=2,max_length=100)
+    email: str = Field(min_length=6,max_length=180)
+    password: str = Field(min_length=12,max_length=128)
+    organization: str = Field(default='',max_length=160)
+    invitation_token: str | None = Field(default=None,min_length=32,max_length=200)
+    vehicle_kind: Literal['Автоцистерна','Фура'] | None = None
+    vehicle_label: str = Field(default='',max_length=100)
+    capacity_tons: Decimal | None = Field(default=None,gt=0,le=100,max_digits=7,decimal_places=2)
+
+def check_invitation(inv: ParticipantInvitation | None):
+    if not inv: raise HTTPException(404,detail='Приглашение не найдено')
+    if inv.status!='pending': invalid('Приглашение уже обработано')
+    if inv.expires.replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc): invalid('Срок приглашения истёк. Попросите новую ссылку')
+
+def activate_partner(db: Session, shipper_id: int, carrier_id: int):
+    approval=db.scalar(select(Approval).where(Approval.shipper_id==shipper_id,Approval.carrier_id==carrier_id))
+    if approval: approval.active=True
+    else: db.add(Approval(shipper_id=shipper_id,carrier_id=carrier_id,active=True))
+    for org_id,role in ((shipper_id,'shipper'),(carrier_id,'carrier')):
+        note_org(db,org_id,role,None,'partner_connected','Партнёр подключён','Обе стороны подтвердили подключение заказчика и перевозчика')
+
+def attach_team(db: Session, target: User, org_id: int):
+    if target.org_id==org_id: return
+    old_org=db.get(Organization,target.org_id)
+    if target.role!='driver' or old_org.kind!='driver': invalid('Этот участник уже состоит в другой компании')
+    driver=db.scalar(select(Driver).where(Driver.user_id==target.id))
+    if not driver: invalid('Профиль водителя не найден')
+    if db.scalar(select(Offer.id).where(Offer.driver_id==driver.id).limit(1)):
+        invalid('Водителя с историей рейсов нельзя переводить автоматически')
+    driver.org_id=org_id;target.org_id=org_id;target.is_admin=False
+    # A second device must refresh the changed membership before continuing.
+    db.execute(delete(WebSession).where(WebSession.user_id==target.id))
+
+def accept_invitation(db: Session, inv: ParticipantInvitation, recipient: User):
+    check_invitation(inv)
+    sender=db.get(User,inv.sender_user_id)
+    if not sender or not sender.active or sender.org_id!=inv.sender_org_id:
+        invalid('Автор приглашения больше не имеет доступа к компании')
+    if recipient.role!=inv.target_role or recipient.email!=inv.target_email: forbidden('Приглашение предназначено другому участнику')
+    if inv.kind=='partner':
+        if {sender.role,recipient.role}!={'shipper','carrier'}: invalid('Несовместимые роли партнёров')
+        activate_partner(db,sender.org_id if sender.role=='shipper' else recipient.org_id,
+                         sender.org_id if sender.role=='carrier' else recipient.org_id)
+    elif inv.kind=='team':
+        if not sender.is_admin: forbidden('Автор больше не управляет сотрудниками')
+        attach_team(db,recipient,sender.org_id)
+    elif inv.kind=='driver_join':
+        if recipient.role!='carrier' or not recipient.is_admin: forbidden('Подключить водителя может руководитель перевозчика')
+        attach_team(db,sender,recipient.org_id)
+    else: invalid('Неизвестный вид приглашения')
+    inv.status='accepted';inv.target_user_id=recipient.id;inv.responded_at=datetime.now(timezone.utc)
+    note_user(db,sender.id,None,'invitation_accepted','Приглашение принято','Участник подтвердил подключение')
+    note_user(db,recipient.id,None,'invitation_accepted','Подключение подтверждено','Список участников обновлён')
+
+@app.get('/api/config')
+def public_config():
+    return {'version':VERSION,'signupEnabled':os.getenv('LOGISTIK_ALLOW_SIGNUP','0')=='1',
+            'roles':['shipper','carrier','driver'],'emailDelivery':False}
+
+@app.post('/api/signup',status_code=201)
+def register_account(payload:Signup,request:Request,response:Response):
+    if os.getenv('LOGISTIK_ALLOW_SIGNUP','0')!='1': forbidden('Самостоятельная регистрация пока не открыта')
+    same_origin(request)
+    email=normalize_email(payload.email);name=clean_label(payload.name)
+    if not payload.password.strip(): invalid('Пароль не может состоять только из пробелов',422)
+    consume_action('signup:'+(request.client.host if request.client else 'unknown'),30)
+    token,csrf=secrets.token_urlsafe(40),secrets.token_urlsafe(28)
+    with db_write() as db:
+        if db.scalar(select(User.id).where(User.email==email)): invalid('Этот адрес уже зарегистрирован. Войдите в свой кабинет')
+        inv=None
+        if payload.invitation_token:
+            inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==sha_token(payload.invitation_token)))
+            check_invitation(inv)
+            if inv.target_user_id is not None: invalid('Участник уже зарегистрирован. Войдите для принятия приглашения')
+            if inv.target_email!=email or inv.target_role!=payload.role: forbidden('Почта или роль не совпадает с приглашением')
+        if inv and inv.kind=='team':
+            org=db.get(Organization,inv.sender_org_id);admin=False
+        else:
+            organization=clean_label(payload.organization,3) if payload.role!='driver' else name
+            org=Organization(name=organization,kind=payload.role);db.add(org);db.flush();admin=payload.role!='driver'
+        account=User(org_id=org.id,email=email,name=name,role=payload.role,password_hash=pass_hash(payload.password),is_admin=admin)
+        db.add(account);db.flush()
+        if payload.role=='driver': db.add(Driver(org_id=org.id,user_id=account.id,name=name))
+        fields=[payload.vehicle_kind is not None,bool(payload.vehicle_label),payload.capacity_tons is not None]
+        if any(fields):
+            if payload.role!='carrier' or not admin or not all(fields): invalid('Для машины заполните тип, обозначение и грузоподъёмность',422)
+            db.add(Vehicle(org_id=org.id,label=clean_label(payload.vehicle_label,3),kind=payload.vehicle_kind,capacity=payload.capacity_tons))
+        if inv: accept_invitation(db,inv,account)
+        db.add(WebSession(token_hash=sha_token(token),user_id=account.id,csrf=csrf,expires=datetime.now(timezone.utc)+timedelta(days=7)))
+    response.set_cookie('logistik_session',token,httponly=True,samesite='strict',
+                        secure=os.getenv('LOGISTIK_SECURE_COOKIE','0')=='1',max_age=7*86400,path='/')
+    return {'ok':True,'message':'Кабинет создан. Подключите участников в разделе «Участники».'}
+
+class InviteIn(BaseModel):
+    kind: Literal['partner','team','driver_join']
+    role: Literal['shipper','carrier','driver']
+    email: str = Field(min_length=6,max_length=180)
+
+class InvitationDecision(BaseModel):
+    accepted: bool
+    token: str | None = Field(default=None,min_length=32,max_length=200)
+
+def invitation_dict(db: Session, inv: ParticipantInvitation, outgoing: bool):
+    sender=db.get(User,inv.sender_user_id);org=db.get(Organization,inv.sender_org_id)
+    status=inv.status
+    if status=='pending' and inv.expires.replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc): status='expired'
+    return {'id':inv.id,'kind':inv.kind,'role':inv.target_role,'email':inv.target_email,
+            'status':status,'outgoing':outgoing,'organization':org.name,'sender':sender.name,
+            'expires':inv.expires.isoformat(),'respondedAt':inv.responded_at.isoformat() if inv.responded_at else None}
+
+@app.get('/api/participants')
+def list_participants(user=Depends(user_session)):
+    with SessionLocal() as db:
+        partners=[]
+        if user['role'] in ('shipper','carrier'):
+            clauses=[Approval.active.is_(True),Approval.shipper_id==user['org_id']] if user['role']=='shipper' else [Approval.active.is_(True),Approval.carrier_id==user['org_id']]
+            for a in db.scalars(select(Approval).where(*clauses)):
+                org=db.get(Organization,a.carrier_id if user['role']=='shipper' else a.shipper_id)
+                partners.append({'id':org.id,'name':org.name,'role':org.kind})
+        team=[]
+        if user['role']!='driver':
+            team=[{'id':u.id,'name':u.name,'email':u.email,'role':u.role,'active':u.active,'admin':u.is_admin}
+                  for u in db.scalars(select(User).where(User.org_id==user['org_id']))]
+        invitations=[]
+        for inv in db.scalars(select(ParticipantInvitation).where(
+                (ParticipantInvitation.sender_user_id==user['id']) | (ParticipantInvitation.target_user_id==user['id'])).order_by(ParticipantInvitation.id.desc()).limit(100)):
+            invitations.append(invitation_dict(db,inv,inv.sender_user_id==user['id']))
+        org=db.get(Organization,user['org_id'])
+        return {'partners':partners,'team':team,'invitations':invitations,'organization':org.name,
+                'standaloneDriver':user['role']=='driver' and org.kind=='driver'}
+
+@app.post('/api/participants/invitations',status_code=201)
+def invite_participant(payload:InviteIn,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf']);email=normalize_email(payload.email)
+    if payload.kind=='partner':
+        if user['role'] not in ('shipper','carrier') or payload.role!=('carrier' if user['role']=='shipper' else 'shipper'): forbidden('Выберите противоположную роль партнёра')
+    elif payload.kind=='team':
+        if not user['is_admin'] or user['role'] not in ('shipper','carrier') or payload.role not in ([user['role'],'driver'] if user['role']=='carrier' else ['shipper']): forbidden('Нет прав добавлять такого сотрудника')
+    elif payload.kind=='driver_join':
+        if user['role']!='driver' or payload.role!='carrier': forbidden()
+    if email==user['email']: invalid('Нельзя пригласить самого себя')
+    consume_action('invite:'+str(user['id']),30)
+    raw=secrets.token_urlsafe(40)
+    with db_write() as db:
+        target=db.scalar(select(User).where(User.email==email))
+        if target and (not target.active or target.role!=payload.role): invalid('Для этого адреса выбрана неподходящая роль или доступ закрыт')
+        if target and target.org_id==user['org_id']: invalid('Участник уже состоит в вашей компании')
+        if payload.kind=='team' and target:
+            if target.role!='driver' or db.get(Organization,target.org_id).kind!='driver': invalid('Участник уже состоит в другой компании')
+        if payload.kind=='driver_join':
+            if db.get(Organization,user['org_id']).kind!='driver': invalid('Вы уже подключены к перевозчику')
+            if target and not target.is_admin: invalid('Укажите почту руководителя перевозчика')
+        pending=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.sender_user_id==user['id'],
+            ParticipantInvitation.target_email==email,ParticipantInvitation.kind==payload.kind,ParticipantInvitation.status=='pending',
+            ParticipantInvitation.expires>datetime.now(timezone.utc)))
+        if pending: invalid('Приглашение уже есть. Используйте «Обновить ссылку»')
+        inv=ParticipantInvitation(sender_user_id=user['id'],sender_org_id=user['org_id'],kind=payload.kind,
+            target_email=email,target_role=payload.role,target_user_id=target.id if target else None,
+            token_hash=sha_token(raw),expires=datetime.now(timezone.utc)+timedelta(days=7))
+        db.add(inv);db.flush()
+        if target: note_user(db,target.id,None,'participant_invitation','Приглашение к подключению','Откройте «Участники» и подтвердите или отклоните приглашение')
+        result={'id':inv.id,'link':str(request.base_url).rstrip('/')+'/#invite='+raw,'emailSent':False}
+    return result
+
+@app.post('/api/participants/invitations/{invitation_id}/respond')
+def respond_invitation(invitation_id:int,payload:InvitationDecision,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    with db_write() as db:
+        inv=db.get(ParticipantInvitation,invitation_id);check_invitation(inv)
+        # Email alone cannot claim an invitation created before the account existed.
+        if inv.target_user_id!=user['id']:
+            if inv.target_user_id is not None or not payload.token or not hmac.compare_digest(inv.token_hash,sha_token(payload.token)):
+                forbidden('Откройте персональную ссылку приглашения')
+        recipient=db.get(User,user['id'])
+        if recipient.email!=inv.target_email or recipient.role!=inv.target_role: forbidden('Это приглашение другому участнику')
+        if payload.accepted: accept_invitation(db,inv,recipient)
+        else: inv.status='rejected';inv.target_user_id=recipient.id;inv.responded_at=datetime.now(timezone.utc)
+    return {'ok':True,'relogin':payload.accepted and user['role']=='driver'}
+
+@app.post('/api/participants/invitations/{invitation_id}/cancel')
+def cancel_invitation(invitation_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    with db_write() as db:
+        inv=db.get(ParticipantInvitation,invitation_id)
+        if not inv or inv.sender_user_id!=user['id']: raise HTTPException(404,detail='Приглашение не найдено')
+        check_invitation(inv);inv.status='cancelled';inv.responded_at=datetime.now(timezone.utc)
+    return {'ok':True}
+
+@app.post('/api/participants/invitations/{invitation_id}/renew')
+def renew_invitation(invitation_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf']);consume_action('invite:'+str(user['id']),30)
+    raw=secrets.token_urlsafe(40)
+    with db_write() as db:
+        inv=db.get(ParticipantInvitation,invitation_id)
+        if not inv or inv.sender_user_id!=user['id']: raise HTTPException(404,detail='Приглашение не найдено')
+        if inv.status!='pending': invalid('Приглашение уже обработано')
+        inv.token_hash=sha_token(raw);inv.expires=datetime.now(timezone.utc)+timedelta(days=7)
+    return {'link':str(request.base_url).rstrip('/')+'/#invite='+raw,'emailSent':False}
+
+class ResolveInvitation(BaseModel):
+    token: str = Field(min_length=32,max_length=200)
+
+@app.post('/api/participants/invitation-info')
+def resolve_invitation(payload:ResolveInvitation,request:Request):
+    same_origin(request)
+    consume_action('invite-info:'+(request.client.host if request.client else 'unknown'),120,5)
+    with SessionLocal() as db:
+        inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==sha_token(payload.token)))
+        check_invitation(inv)
+        return {**invitation_dict(db,inv,False),'registered':inv.target_user_id is not None}
+
+class AddVehicle(BaseModel):
+    label: str = Field(min_length=3,max_length=100)
+    kind: Literal['Автоцистерна','Фура']
+    capacity: Decimal = Field(gt=0,le=100,max_digits=7,decimal_places=2)
+
+@app.post('/api/carrier/vehicles',status_code=201)
+def add_vehicle(payload:AddVehicle,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    if user['role']!='carrier' or not user['is_admin']: forbidden()
+    label=clean_label(payload.label,3)
+    with db_write() as db:
+        if any(existing.casefold()==label.casefold() for existing in db.scalars(select(Vehicle.label).where(Vehicle.org_id==user['org_id']))):
+            invalid('Машина с таким обозначением уже добавлена')
+        vehicle=Vehicle(org_id=user['org_id'],label=label,kind=payload.kind,capacity=payload.capacity)
+        db.add(vehicle);db.flush();return {'id':vehicle.id,'label':label}
+
+@app.post('/api/participants/team/{member_id}/deactivate')
+def deactivate_member(member_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    if not user['is_admin'] or user['role'] not in ('shipper','carrier'): forbidden()
+    with db_write() as db:
+        member=db.get(User,member_id)
+        if not member or member.org_id!=user['org_id']: raise HTTPException(404,detail='Сотрудник не найден')
+        if member.id==user['id'] or member.is_admin: invalid('Доступ руководителя нельзя отключить здесь')
+        driver=db.scalar(select(Driver).where(Driver.user_id==member.id))
+        if driver and db.scalar(select(Offer.id).join(Shipment,Shipment.id==Offer.shipment_id).where(Offer.driver_id==driver.id,
+                Offer.status.in_(['waiting_driver','driver_ok','selected']),Shipment.status.notin_(['completed','cancelled']))):
+            invalid('Сначала завершите или отмените действующие предложения и рейсы водителя')
+        member.active=False;db.execute(delete(WebSession).where(WebSession.user_id==member.id))
+    return {'ok':True}
+
 # Test data exclusively. No private contents of the customer's spreadsheet are imported.
 def seed_demo():
     if not DEMO:return
@@ -1025,10 +1314,10 @@ def seed_demo():
         c2=Organization(name='Демо: Транзит-Урал',kind='carrier')
         db.add_all([ship,c1,c2]);db.flush()
         password='Demo-2026-Start!'
-        u1=User(org_id=ship.id,email='shipper@example.test',name='Логист',role='shipper',password_hash=pass_hash(password))
-        u2=User(org_id=c1.id,email='carrier@example.test',name='Диспетчер',role='carrier',password_hash=pass_hash(password))
+        u1=User(org_id=ship.id,email='shipper@example.test',name='Логист',role='shipper',is_admin=True,password_hash=pass_hash(password))
+        u2=User(org_id=c1.id,email='carrier@example.test',name='Диспетчер',role='carrier',is_admin=True,password_hash=pass_hash(password))
         u3=User(org_id=c1.id,email='driver@example.test',name='Сергей К.',role='driver',password_hash=pass_hash(password))
-        u4=User(org_id=c2.id,email='carrier2@example.test',name='Диспетчер 2',role='carrier',password_hash=pass_hash(password))
+        u4=User(org_id=c2.id,email='carrier2@example.test',name='Диспетчер 2',role='carrier',is_admin=True,password_hash=pass_hash(password))
         u5=User(org_id=c2.id,email='driver2@example.test',name='Андрей М.',role='driver',password_hash=pass_hash(password))
         db.add_all([u1,u2,u3,u4,u5]);db.flush()
         db.add_all([Approval(shipper_id=ship.id,carrier_id=c1.id),Approval(shipper_id=ship.id,carrier_id=c2.id)])

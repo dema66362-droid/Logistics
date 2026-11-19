@@ -1,4 +1,4 @@
-# Versions used for the verified 2.7.0 acceptance run (Python 3.12).
+# Versions used for the verified 2.8.0 acceptance run (Python 3.12).
 fastapi==0.141.1
 uvicorn==0.52.1
 SQLAlchemy==2.1.9

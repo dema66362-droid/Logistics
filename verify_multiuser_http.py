@@ -39,16 +39,16 @@ def run():
         try:
             for _ in range(70):
                 try:
-                    if httpx.get(base+'/health',timeout=0.4).status_code==200:break
+                    if httpx.get(base+'/health',timeout=0.4,trust_env=False).status_code==200:break
                 except (httpx.HTTPError, OSError): pass
                 if proc.poll() is not None: raise RuntimeError('Server stopped during startup')
                 time.sleep(.15)
             else: raise RuntimeError('Server did not start')
-            outsider=httpx.Client(base_url=base,timeout=8)
+            outsider=httpx.Client(base_url=base,timeout=8,trust_env=False)
             check(outsider.get('/api/state'),401,'no login blocked')
             sessions=[]
             for email,role in ACCOUNTS:
-                c=httpx.Client(base_url=base,timeout=8)
+                c=httpx.Client(base_url=base,timeout=8,trust_env=False)
                 check(c.post('/api/login',json={'email':email,'password':PASSWORDS[email]}),200,email+' login')
                 st=check(c.get('/api/state'),200,email+' state')
                 assert st['user']['role']==role

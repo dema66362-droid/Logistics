@@ -17,7 +17,7 @@ from pathlib import Path
 from sqlalchemy import func, select, text
 from app import Base, db_write, engine
 
-EXCLUDED = {'web_sessions', 'login_throttles'}
+EXCLUDED = {'web_sessions', 'login_throttles', 'participant_invitations'}
 
 
 def tables():
@@ -67,6 +67,10 @@ def restore(path: Path, *, confirm_empty: bool):
         raise ValueError('Incompatible snapshot format or tables')
     for table in tables():
         columns = set(table.columns.keys())
+        if table.name == 'users':
+            for row in snapshot['tables']['users']:
+                if set(row) == columns - {'is_admin'}:
+                    row['is_admin'] = row['role'] in ('shipper', 'carrier')
         if any(set(row) != columns for row in snapshot['tables'][table.name]):
             raise ValueError('Incompatible snapshot columns')
     with db_write() as db:

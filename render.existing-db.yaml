@@ -17,7 +17,7 @@ services:
       - key: LOGISTIK_DEMO
         value: "0"
       - key: LOGISTIK_ALLOW_SIGNUP
-        value: "0"
+        value: "1"
       - key: LOGISTIK_SECURE_COOKIE
         value: "1"
       - key: LOGISTIK_ALLOWED_HOSTS

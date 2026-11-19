@@ -12,8 +12,8 @@ if os.environ.get('LOGISTIK_DEPLOYMENT', 'pilot').lower() != 'pilot':
     refuse('LOGISTIK_DEPLOYMENT must be pilot')
 if os.environ.get('LOGISTIK_DEMO', '0') != '0':
     refuse('LOGISTIK_DEMO must be 0')
-if os.environ.get('LOGISTIK_ALLOW_SIGNUP', '0') != '0':
-    refuse('signup must be disabled')
+if os.environ.get('LOGISTIK_ALLOW_SIGNUP', '0') not in ('0','1'):
+    refuse('LOGISTIK_ALLOW_SIGNUP must be 0 or 1')
 if os.environ.get('LOGISTIK_SECURE_COOKIE', '0') != '1':
     refuse('HTTPS cookie required')
 if not os.environ.get('LOGISTIK_DATABASE_URL','').startswith('postgresql://'):
