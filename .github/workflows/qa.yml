@@ -1,0 +1,45 @@
+name: Logistik final pilot QA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: logistik_ci
+          POSTGRES_PASSWORD: local_ci_only_password
+          POSTGRES_DB: logistik_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U logistik_ci -d logistik_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install tested dependencies
+        run: python -m pip install -r requirements-dev.txt -c constraints.txt
+      - name: API, permissions, CSV, restore and design regression
+        run: python -m pytest -q
+      - name: Five independent sessions through HTTP
+        run: python verify_multiuser_http.py
+      - name: PostgreSQL concurrency and recovery
+        env:
+          LOGISTIK_QA_DATABASE_URL: postgresql://logistik_ci:local_ci_only_password@127.0.0.1:5432/logistik_ci
+        run: python scripts/verify_postgres.py
