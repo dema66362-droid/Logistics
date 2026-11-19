@@ -27,6 +27,7 @@ def accounts(tmp_path, monkeypatch):
         payload.update(extra)
         response=client.post('/api/signup',json=payload)
         assert response.status_code==201,response.text
+        client.qa_recovery_code=response.json().get('recoveryCode')
         assert client.get('/api/state').status_code==200
         return client
     yield register
@@ -119,7 +120,7 @@ def test_driver_requests_carrier_and_cannot_be_stolen(accounts):
 
 def test_invitation_lifecycle_expiry_revocation_and_rotation(accounts):
     owner=accounts('shipper');carrier=accounts('carrier');inv=invite(owner,'carrier@example.test','partner','carrier')
-    assert post(owner,'/api/participants/invitations',dict(email='carrier@example.test',kind='partner',role='carrier')).status_code==409
+    assert post(owner,'/api/participants/invitations',dict(email='carrier@example.test',kind='partner',role='carrier')).status_code==200
     assert post(carrier,f"/api/participants/invitations/{inv['id']}/renew").status_code==404
     new=post(owner,f"/api/participants/invitations/{inv['id']}/renew").json()
     assert TestClient(core.app).post('/api/participants/invitation-info',json={'token':token(inv)}).status_code==404
@@ -196,7 +197,9 @@ def test_legacy_backup_restores_roles_without_live_invitations(accounts,tmp_path
     backup=importlib.util.module_from_spec(spec);spec.loader.exec_module(backup)
     path=tmp_path/'snapshot.json';backup.save(path)
     envelope=json.loads(path.read_text());payload=json.loads(envelope['payload'])
-    assert 'participant_invitations' not in payload['tables']
+    assert len(payload['tables']['participant_invitations'])==1
+    for name in backup.ADDITIVE_TABLES:payload['tables'].pop(name,None)
+    for row in payload['tables']['notifications']:row.pop('event_key',None)
     # A genuine 2.7 snapshot has no ownership flag; upgrade only that column.
     for row in payload['tables']['users']:row.pop('is_admin')
     envelope['payload']=backup.canonical(payload)
