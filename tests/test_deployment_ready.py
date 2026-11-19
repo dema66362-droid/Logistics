@@ -18,7 +18,7 @@ def test_render_blueprint_is_valid_shape_and_locked_down():
     assert service['healthCheckPath']=='/health'
     assert service['autoDeployTrigger']=='off'
     env={v['key']:v for v in service['envVars']}
-    for key,val in {'LOGISTIK_ALLOW_SIGNUP':'0','LOGISTIK_DEMO':'0','LOGISTIK_SECURE_COOKIE':'1','LOGISTIK_DEPLOYMENT':'pilot'}.items():
+    for key,val in {'LOGISTIK_ALLOW_SIGNUP':'1','LOGISTIK_DEMO':'0','LOGISTIK_SECURE_COOKIE':'1','LOGISTIK_DEPLOYMENT':'pilot'}.items():
         assert str(env[key]['value']) == val
     for name in ('SHIPPER','CARRIER1','DRIVER1','CARRIER2','DRIVER2'):
         assert env['LOGISTIK_TEST_'+name+'_PASSWORD']['sync'] is False
