@@ -1,0 +1,2 @@
+from_city;to_city;recipient;product;tons;date;time;unload;vehicle_type;mode;budget;pickup_address;delivery_address;recipient_contact;terms
+Тестовый город А;Тестовый город Б;Учебный склад;Вода техническая;20;2027-01-15;10:00;2027-01-16;Фура;Доставка;90000;Условная площадка 1;Условный склад 2;Вымышленный контакт;Учебные условия без реальной доставки
