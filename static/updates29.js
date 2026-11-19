@@ -48,7 +48,13 @@ let registration29=null;
 async function worker29(){if(!('serviceWorker'in navigator))throw Error('Браузер не поддерживает фоновые уведомления');registration29=registration29||await navigator.serviceWorker.register('/service-worker.js',{scope:'/'});await navigator.serviceWorker.ready;return registration29}
 async function bindExistingPush29(){const key=state.user?.id+':'+authGeneration;if(pushBound29===key)return;const registration=await worker29(),subscription=await registration.pushManager.getSubscription();if(subscription){await api('/api/push/subscribe','POST',subscription.toJSON());pushBound29=key}}
 async function enablePush29(){if(!Notification29())throw Error('В этом браузере нет поддержки Web Push. Уведомления в открытом сайте работают.');const permission=await Notification.requestPermission();if(permission!=='granted')throw Error('Разрешите уведомления в настройках сайта в браузере');const registration=await worker29();const key=config.pushPublicKey.replace(/-/g,'+').replace(/_/g,'/');const bytes=Uint8Array.from(atob(key+'='.repeat((4-key.length%4)%4)),c=>c.charCodeAt(0));let subscription=await registration.pushManager.getSubscription();if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes});await api('/api/push/subscribe','POST',subscription.toJSON());pushBound29=state.user.id+':'+authGeneration;account29=await api('/api/account');toast('Фоновые уведомления подключены к этой учётной записи');render()}
-if('serviceWorker'in navigator){navigator.serviceWorker.addEventListener('message',e=>{if(e.data?.type==='logistik-push'&&state.user?.id===e.data.userId)loadState({fromEvent:true}).catch(()=>{})});worker29().catch(()=>{})}
+if('serviceWorker'in navigator){navigator.serviceWorker.addEventListener('message',async e=>{
+ if(e.data?.type!=='logistik-push')return;
+ let handled=false;
+ if(state.user?.id===e.data.userId){try{await loadState({fromEvent:true});handled=state.user?.id===e.data.userId&&(!state.soundOn||audioContext?.state==='running')}catch{}}
+ // A visible page only owns delivery when it can actually alert this account.
+ e.ports?.[0]?.postMessage({handled});
+ });worker29().catch(()=>{})}
 document.addEventListener('change',e=>{if(e.target.id==='soundVolume29'){state.soundVolume=Number(e.target.value);writeLocal29(soundKey29()+'.volume',state.soundVolume);unlockAudio29();setTimeout(()=>playSound29(true),0)}});
 document.addEventListener('click',async e=>{
  const button=e.target.closest('button');if(!button)return;
