@@ -145,7 +145,7 @@ function render(){
  document.getElementById('main').innerHTML=(views[state.view]||overview)();
  document.getElementById('nav-count').textContent=state.orders.length;
  const modal=state.modal||'';
- document.getElementById('overlay').innerHTML=modal==='new'?newModal():modal.startsWith('detail:')?detailsModal(modal.slice(7)):modal.startsWith('bid:')?bidModal(modal.slice(4)):modal.startsWith('confirm:')?confirmModal(modal.slice(8)):modal==='notices'?noticesModal():modal==='signup'?signupModal():modal==='password'?passwordModal():modal==='participants'?participantsModal():modal==='vehicle'?vehicleModal():modal==='invitation'?invitationModal():'';
+ document.getElementById('overlay').innerHTML=modal==='new'?newModal():modal.startsWith('detail:')?detailsModal(modal.slice(7)):modal.startsWith('bid:')?bidModal(modal.slice(4)):modal.startsWith('confirm:')?confirmModal(modal.slice(8)):modal==='notices'?noticesModal():modal==='signup'?signupModal():modal==='password'?passwordModal():modal==='participants'?participantsModal():modal==='vehicle'?vehicleModal():modal==='invitation'?invitationModal():modal==='account'?accountModal29():modal==='recoveryCode'?recoveryCodeModal29():'';
 }
 function closeModal(){state.modal='';if(!state.user){document.getElementById('overlay').innerHTML='';return}render()}
 async function api(path,method='GET',body){
@@ -162,7 +162,7 @@ async function loadState({fromEvent=false}={}){
  const data=await api('/api/state');
  if(generation!==authGeneration||requestId!==lastStateRequest)return;
  state.orders=data.orders;state.offers=data.offers;state.drivers=data.drivers;state.vehicles=data.vehicles;state.user=data.user;state.csrf=data.csrf;
- state.notifications=data.notifications||[];
+ state.notifications=data.notifications||[];state.unreadTotal=data.unreadNotifications;
  const highest=state.notifications.reduce((x,n)=>Math.max(x,n.id),0);
  const fresh=state.notifications.filter(n=>!n.read&&n.id>state.seenNoteId);
  if(!state.firstNotes&&fresh.length){beep();toast(fresh[0].title+': '+fresh[0].message)}
@@ -178,7 +178,7 @@ function showLogin(){
  document.getElementById('nav-count').textContent='0';
  document.body.classList.add('login-view');
  document.getElementById('overlay').innerHTML='';
- document.getElementById('main').innerHTML=`<div class="panel" style="padding:30px;max-width:430px;margin:8vh auto"><div class="brand-mark" style="margin-bottom:18px">Л</div><h1 style="margin:0 0 8px">Вход в Логистик</h1><p style="color:#8290a2;font-size:13px;line-height:1.5">Одна платформа для заказчика, перевозчика и водителя. Войдите под своей учётной записью.</p><form id="loginForm"><div class="field"><label for="loginEmail">Электронная почта</label><input id="loginEmail" name="email" type="email" required autocomplete="username"></div><div class="field"><label for="loginPassword">Пароль</label><input id="loginPassword" name="password" type="password" required autocomplete="current-password"></div><p id="loginError" style="color:#b51d33;font-size:12px"></p><button class="btn primary" style="width:100%;margin-top:12px" type="submit">Войти</button></form><button type="button" class="btn" data-signup ${config.signupEnabled?'':'hidden'} style="width:100%;margin-top:8px">Регистрация пользователя</button><p class="under-note">Тестовые учётные записи — только в инструкции локального пилота. Это не публичный рабочий сервис.</p></div>`;
+ document.getElementById('main').innerHTML=`<div class="panel" style="padding:30px;max-width:430px;margin:8vh auto"><div class="brand-mark" style="margin-bottom:18px">Л</div><h1 style="margin:0 0 8px">Вход в Логистик</h1><p style="color:#8290a2;font-size:13px;line-height:1.5">Одна платформа для заказчика, перевозчика и водителя. Войдите под своей учётной записью.</p><form id="loginForm"><div class="field"><label for="loginEmail">Электронная почта</label><input id="loginEmail" name="email" type="email" required autocomplete="username"></div><div class="field"><label for="loginPassword">Пароль</label><input id="loginPassword" name="password" type="password" required autocomplete="current-password"></div><p id="loginError" style="color:#b51d33;font-size:12px"></p><button class="btn primary" style="width:100%;margin-top:12px" type="submit">Войти</button></form><button type="button" class="btn" data-recover style="width:100%;margin-top:8px">Забыли пароль?</button><button type="button" class="btn" data-signup ${config.signupEnabled?'':'hidden'} style="width:100%;margin-top:8px">Регистрация пользователя</button><p class="under-note">Тестовые учётные записи — только в инструкции локального пилота. Это не публичный рабочий сервис.</p></div>`;
 }
 function errorToast(e){toast(e?.message||'Произошла ошибка')}
 document.addEventListener('click',async e=>{
@@ -256,11 +256,11 @@ document.addEventListener('submit',async e=>{
 
  if(form.id==='signupForm'){
    const body={...d,role:d.role||pendingInvitation?.role,invitation_token:invitationToken||null};
-   await api('/api/signup','POST',body);invitationToken='';pendingInvitation=null;state.initialized=false;state.firstNotes=true;await loadState();toast('Кабинет создан');return;
+   const result=await api('/api/signup','POST',body);invitationToken='';pendingInvitation=null;state.initialized=false;state.firstNotes=true;await loadState();showRecoveryCode29(result.recoveryCode);toast('Кабинет создан');return;
  }
  if(form.id==='inviteForm'){
    const [kind,role]=d.participantType.split(':');const r=await api('/api/participants/invitations','POST',{kind,role,email:d.email});
-   await openParticipants();showInvitationLink(r.link);return;
+   await openParticipants();if(r.link)showInvitationLink(r.link);else toast(r.message||'Приглашение уже сохранено');return;
  }
  if(form.id==='vehicleForm'){
    await api('/api/carrier/vehicles','POST',{label:d.label,kind:d.kind,capacity:Number(d.capacity)});await loadState();await openParticipants();toast('Машина добавлена');return;
@@ -275,7 +275,8 @@ document.addEventListener('submit',async e=>{
  }
  }catch(err){const msg=err.message||'Ошибка';if(['loginForm','signupForm'].includes(form.id)){const p=document.getElementById(form.id==='loginForm'?'loginError':'signupError');if(p)p.textContent=msg}else errorToast(err)}finally{delete form.dataset.submitting;if(submit&&submit.isConnected)submit.disabled=false}
 });
-startApp();
+// Startup is performed after loading updates29.js.
 setInterval(()=>{if(state.user&&!state.modal&&!document.activeElement?.matches('input,textarea,select'))loadState().catch(()=>{})},15000);
 </script>
+<script src="/updates29.js"></script>
 </body></html>
