@@ -157,15 +157,24 @@ def run_case(playwright,engine_name,viewport,case_name):
             expect(ship.locator('details summary')).to_contain_text('Архив приглашений')
             ship.locator('details summary').click()
             # Exercise a slow real restore after the user has already closed this dialog.
-            restore_pattern='**/api/participants/invitations/'+invitation_id+'/restore'
-            held_restores=[]
-            ship.route(restore_pattern,lambda route:held_restores.append(route))
-            ship.locator('[data-invitation-row="'+invitation_id+'"] [data-restore-invite]').click()
+            restore_path='/api/participants/invitations/'+invitation_id+'/restore'
+            # Delay delivery of the real HTTP response to the interface in every engine.
+            ship.evaluate("""path => {
+                const original = window.fetch;
+                let release;
+                const delayed = new Promise(resolve => { release = resolve; });
+                window.releaseRestore = () => { window.fetch = original; release(); };
+                window.fetch = async (...args) => {
+                    const response = await original.apply(window, args);
+                    if (new URL(response.url).pathname === path) await delayed;
+                    return response;
+                };
+            }""",restore_path)
+            with ship.expect_response(lambda response:response.url.endswith(restore_path)) as restored:
+                ship.locator('[data-invitation-row="'+invitation_id+'"] [data-restore-invite]').click()
+            assert restored.value.ok
             close(ship)
-            assert len(held_restores)==1
-            with ship.expect_response(lambda response:response.url.endswith('/'+invitation_id+'/restore')):
-                held_restores[0].continue_()
-            ship.unroute(restore_pattern)
+            ship.evaluate('window.releaseRestore()')
             participants(carrier)
             carrier.get_by_role('button',name='+ Машина',exact=True).click()
             carrier.get_by_label('Обозначение машины',exact=True).fill('QA А001АА')
@@ -226,11 +235,16 @@ def run_case(playwright,engine_name,viewport,case_name):
             expect(driver.get_by_role('dialog')).to_contain_text('08:45')
             close(driver)
             driver.get_by_role('button',name='Внести отпуск',exact=True).click()
-            leave=(date.fromisoformat(day)+timedelta(days=3)).isoformat()
+            trip_day=date.fromisoformat(day)
+            leave_start=trip_day+timedelta(days=-3 if trip_day.day>3 else 1)
+            leave=leave_start.isoformat()
             driver.get_by_label('Первый день',exact=True).fill(leave)
-            driver.get_by_label('Последний день включительно',exact=True).fill(leave)
+            driver.get_by_label('Последний день включительно',exact=True).fill((leave_start+timedelta(days=1)).isoformat())
             driver.get_by_role('button',name='Сохранить отпуск',exact=True).click()
             expect(driver.locator('[data-dispatch="driverDay"][data-id="'+leave+'"]')).to_contain_text('Отпуск')
+            driver.locator('[data-dispatch="driverDay"][data-id="'+day+'"]').click()
+            expect(driver.locator('.d31job').first).to_contain_text('08:45')
+            driver.screenshot(path=str(ARTIFACTS/f'{case_name}-active-calendar.png'),full_page=True)
             # Price is filtered by the real API, rather than hidden in the page.
             ds=driver.request.get(base+'/api/state').json()
             assert all(offer['price']==0 for offer in ds['offers'])
