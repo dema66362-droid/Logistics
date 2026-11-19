@@ -1,4 +1,26 @@
 'use strict';
+// Keep header controls attached while asynchronous updates refresh trips and notification counts.
+function renderDashboard31(markup) {
+    const main=document.getElementById('main'),template=document.createElement('template');
+    template.innerHTML=markup;
+    const incoming=template.content.firstElementChild,current=main.firstElementChild;
+    const identity=String(state.user.id)+'|'+state.view;
+    if(!current?.matches('header.top')||!incoming?.matches('header.top')||current.dataset.identity!==identity){
+        if(incoming)incoming.dataset.identity=identity;
+        main.replaceChildren(template.content);return;
+    }
+    const previous=current.querySelectorAll('button'),next=incoming.querySelectorAll('button');
+    if(previous.length!==next.length){incoming.dataset.identity=identity;main.replaceChildren(template.content);return}
+    for(let i=0;i<previous.length;i++){
+        const a=previous[i],b=next[i];
+        for(const name of a.getAttributeNames())if(!b.hasAttribute(name))a.removeAttribute(name);
+        for(const name of b.getAttributeNames())if(a.getAttribute(name)!==b.getAttribute(name))a.setAttribute(name,b.getAttribute(name));
+        if(a.innerHTML!==b.innerHTML)a.innerHTML=b.innerHTML;
+    }
+    incoming.remove();
+    while(current.nextSibling)current.nextSibling.remove();
+    main.append(template.content);
+}
 const weekNames31=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 const stageNames31={waiting_driver:'Ждём водителя',driver_ok:'Резерв',selected:'Назначен',completed:'Завершён'};
 const shortDate31=d=>d?d.slice(8,10)+'.'+d.slice(5,7):'—';
@@ -55,6 +77,10 @@ function shipperSchedule31(title){
 }
 overview=()=>shipperSchedule31('План отгрузок');
 table=()=>shipperSchedule31('Таблица отгрузок');
+allOffers=function(){
+    const rows=state.orders.filter(o=>['search','choice'].includes(o.status)&&(o.slotProposals?.length||state.offers.some(q=>q.orderId===o.id&&['waiting_driver','driver_ok'].includes(q.status))));
+    return htop('Предложения перевозчиков','Заказчик')+`<div class="d31"><section class="panel d31panel"><h2>Предложения по заявкам · ${rows.length}</h2>${rows.map(o=>`<div class="d31request"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} в ${esc(o.time)} · ${esc(orderStage31(o))}</small></div>${button31('Открыть предложения','detail',o.id)}${slotStatus31(o,true)}</div>`).join('')||'<p class="d31empty">Предложений пока нет.</p>'}</section></div>`;
+};
 
 function dateOnJob31(j,d){return d>=j.offer.day&&d<=j.offer.endDate}
 function scheduleRow31(j) {

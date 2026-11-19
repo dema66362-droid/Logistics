@@ -142,7 +142,7 @@ function render(){
  if(!allowed.includes(state.view))state.view=allowed[0];
  document.querySelectorAll('#nav [data-view]').forEach(b=>{b.hidden=!allowed.includes(b.dataset.view);b.style.display=b.hidden?'none':'';b.classList.toggle('active',b.dataset.view===state.view)});
  const views={overview,table,offers:allOffers,carrier,driver};
- document.getElementById('main').innerHTML=(views[state.view]||overview)();
+ renderDashboard31((views[state.view]||overview)());
  document.getElementById('nav-count').textContent=state.orders.length;
  const modal=state.modal||'';
  document.getElementById('overlay').innerHTML=modal==='new'?newModal():modal.startsWith('detail:')?detailsModal(modal.slice(7)):modal.startsWith('bid:')?bidModal(modal.slice(4)):modal.startsWith('confirm:')?confirmModal(modal.slice(8)):modal==='notices'?noticesModal():modal==='signup'?signupModal():modal==='password'?passwordModal():modal==='participants'?participantsModal():modal==='vehicle'?vehicleModal():modal==='invitation'?invitationModal():modal.startsWith('dispatch:')?dispatchDialog():modal==='account'?accountModal29():modal==='recoveryCode'?recoveryCodeModal29():'';
@@ -158,7 +158,7 @@ async function api(path,method='GET',body){
  return data;
 }
 async function loadState({fromEvent=false}={}){
- const generation=authGeneration,requestId=++lastStateRequest;
+ const generation=authGeneration,requestId=++lastStateRequest,openedModal=state.modal;
  const data=await api('/api/state');
  if(generation!==authGeneration||requestId!==lastStateRequest)return;
  state.orders=data.orders;state.offers=data.offers;state.drivers=data.drivers;state.vehicles=data.vehicles;state.user=data.user;state.csrf=data.csrf;
@@ -169,7 +169,7 @@ async function loadState({fromEvent=false}={}){
  state.firstNotes=false;state.seenNoteId=Math.max(state.seenNoteId,highest);
  if(!state.focus||!getOrder(state.focus))state.focus=state.orders.find(o=>o.date===state.day&&o.status==='choice')?.id||state.orders.find(o=>o.date===state.day)?.id||state.orders[0]?.id||'';
  if(!state.initialized){state.day=data.day;state.initialized=true}
- if(!fromEvent)state.modal='';document.body.classList.remove('login-view');if(!(fromEvent&&state.modal))render();if(!eventFeed)connectEvents();
+ if(!fromEvent&&state.modal===openedModal)state.modal='';document.body.classList.remove('login-view');if(!(fromEvent&&state.modal))render();if(!eventFeed)connectEvents();
 }
 function showLogin(){
  authGeneration++;lastStateRequest++;
@@ -186,7 +186,7 @@ document.addEventListener('click',async e=>{
  try{
  if(el.hasAttribute('data-closebg')&&e.target===el){closeModal();return}
  if(el.hasAttribute('data-close')){closeModal();return}
- if(el.dataset.view||el.dataset.setview){state.view=el.dataset.view||el.dataset.setview;state.modal='';render();return}
+ if(el.dataset.view||el.dataset.setview){state.view=el.dataset.view||el.dataset.setview;if(state.view==='overview'||state.view==='table')fullColumns31=state.view==='table';state.modal='';render();return}
  if(el.dataset.week){state.day=plusDays(state.day,Number(el.dataset.week));state.filter='all';state.focus=dayOrders()[0]?.id||'';render();return}
  if(el.dataset.day){state.day=el.dataset.day;state.focus=dayOrders()[0]?.id||'';render();return}
  if(el.dataset.filter){state.filter=el.dataset.filter;render();return}
@@ -276,7 +276,7 @@ document.addEventListener('submit',async e=>{
  }catch(err){const msg=err.message||'Ошибка';if(['loginForm','signupForm'].includes(form.id)){const p=document.getElementById(form.id==='loginForm'?'loginError':'signupError');if(p)p.textContent=msg}else errorToast(err)}finally{delete form.dataset.submitting;if(submit&&submit.isConnected)submit.disabled=false}
 });
 // Startup is performed after loading updates29.js.
-setInterval(()=>{if(state.user&&!state.modal&&!document.activeElement?.matches('input,textarea,select'))loadState().catch(()=>{})},15000);
+setInterval(()=>{if(state.user&&!state.modal&&!document.activeElement?.matches('input,textarea,select'))loadState({fromEvent:true}).catch(()=>{})},15000);
 </script>
 <script src="/updates29.js"></script>
 <script src="/dispatch31.js"></script>
