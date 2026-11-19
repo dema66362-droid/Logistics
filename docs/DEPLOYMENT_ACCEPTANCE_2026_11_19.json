@@ -1,0 +1,94 @@
+{
+  "verified_date": "2026-11-19",
+  "site": "https://logistik-pilot-site.onrender.com/",
+  "version": "2.7.0",
+  "deployment": {
+    "provider": "Render",
+    "workspace": "My Workspace",
+    "service": "logistik-pilot-site",
+    "region": "frankfurt",
+    "plan": "free",
+    "id": "dep-dbvdavnbhbds73faen20",
+    "status": "live",
+    "finished_at": "2026-11-19T13:57:14+03:00",
+    "source_commit": "f0b769108586a069579b2aa577dcbfeb7da958d9",
+    "blueprint_file": "render.existing-db.yaml",
+    "database": "logistik-pilot-db",
+    "database_reused": true,
+    "database_expires_at": "2026-12-19T11:34:42+03:00"
+  },
+  "ci": {
+    "url": "https://github.com/dema66362-droid/Logistics/actions/runs/44509788255",
+    "status": "success",
+    "checks": [
+      "40 tests",
+      "5 independent HTTP sessions",
+      "PostgreSQL concurrency, exclusive holds, durable throttling, backup and recovery"
+    ]
+  },
+  "public_https": {
+    "url": "https://logistik-pilot-site.onrender.com",
+    "checks": [
+      {
+        "path": "/health",
+        "status": 200,
+        "passed": true,
+        "https": true,
+        "response": {
+          "status": "ok",
+          "service": "logistik",
+          "version": "2.7.0"
+        }
+      },
+      {
+        "path": "/",
+        "status": 200,
+        "passed": true,
+        "https": true,
+        "html_sha256": "ad041a9ba56a7395a37fb232b26070c50712682d1ec359708dc35a4d9a3a6306",
+        "approved_html_identical": true,
+        "security_headers": true
+      },
+      {
+        "path": "/api/state",
+        "status": 401,
+        "passed": true,
+        "https": true
+      },
+      {
+        "path": "/api/export.csv",
+        "status": 401,
+        "passed": true,
+        "https": true
+      },
+      {
+        "path": "/docs",
+        "status": 404,
+        "passed": true,
+        "https": true
+      },
+      {
+        "path": "/openapi.json",
+        "status": 404,
+        "passed": true,
+        "https": true
+      }
+    ],
+    "all_passed": true
+  },
+  "browser": {
+    "login_form_visible": true,
+    "application_errors_observed": 0,
+    "authenticated_workflow_verified": false,
+    "physical_mobile_devices_verified": false
+  },
+  "startup": {
+    "synthetic_users_created": 5,
+    "draft_orders_created": 1,
+    "password_values_logged": false
+  },
+  "limitations": [
+    "Closed synthetic pilot only",
+    "Authenticated external browser workflow and physical device acceptance remain outstanding"
+  ]
+}
