@@ -48,7 +48,6 @@ jobs:
           LOGISTIK_QA_DATABASE_URL: postgresql://logistik_ci:local_ci_only_password@127.0.0.1:5432/logistik_ci
         run: python scripts/verify_postgres.py
   browser:
-    needs: acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     container:
