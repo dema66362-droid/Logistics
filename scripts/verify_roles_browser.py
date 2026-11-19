@@ -34,6 +34,7 @@ def register(page,base,role,email,name,company):
     if role!='driver':
         expect(page.get_by_label('Название организации',exact=True)).to_be_visible()
         page.get_by_label('Название организации',exact=True).fill(company)
+        page.get_by_label('ИНН',exact=True).fill('0000000018')
     else: expect(page.get_by_label('Название организации',exact=True)).to_be_hidden()
     page.get_by_label('Ваше имя',exact=True).fill(name)
     page.get_by_label('Электронная почта',exact=True).last.fill('mailto:'+email)
@@ -173,8 +174,11 @@ def run_case(playwright,engine_name,viewport,case_name):
             ship.locator('#newForm [name="vehicleType"]').select_option(label='Фура')
             ship.get_by_role('button',name='Создать заявку',exact=True).click()
             expect(ship.locator('#newForm')).to_have_count(0)
-            ship.locator('[data-search-order]').first.click()
-            expect(ship.locator('[data-search-order]')).to_have_count(0)
+            ship.get_by_role('button',name='Отправить заявку',exact=True).click()
+            send=ship.get_by_role('dialog',name='Отправить заявку перевозчику')
+            send.get_by_label('Перевозчик QA',exact=True).check()
+            send.get_by_role('button',name='Отправить заявку',exact=True).click()
+            expect(send).to_have_count(0)
             carrier.bring_to_front()
             carrier.get_by_role('button',name='Обновить',exact=True).click()
             carrier.locator('[data-bid]').first.click()
@@ -184,24 +188,51 @@ def run_case(playwright,engine_name,viewport,case_name):
             expect(carrier.locator('#bidForm')).to_have_count(0)
             driver.bring_to_front()
             driver.get_by_role('button',name='Обновить',exact=True).click()
-            driver.get_by_role('button',name='Подтверждаю',exact=False).click()
+            request=driver.locator('.d31request').filter(has_text='Тестовый город Б')
+            request.get_by_role('button',name='Предложить время',exact=True).click()
+            driver.get_by_label('Время подачи',exact=True).fill('08:45')
+            driver.get_by_role('button',name='Отправить заказчику',exact=True).click()
+            expect(driver.get_by_role('dialog')).to_have_count(0)
+            request.get_by_role('button',name='Подтверждаю рейс',exact=True).click()
             expect(driver.locator('[data-driver-ok]')).to_have_count(0)
             ship.bring_to_front()
             ship.get_by_role('button',name='Обновить',exact=True).click()
+            dispute=ship.locator('.slotDispute').first
+            expect(dispute).to_contain_text('09:00')
+            expect(dispute).to_contain_text('08:45')
+            dispute.get_by_role('button',name='Согласовать и поставить в очередь',exact=True).click()
+            expect(ship.locator('.d31time').first).to_have_text('08:45')
+            ship.get_by_role('button',name='Предложения',exact=True).last.click()
             ship.locator('[data-select-quote]').first.click()
             ship.get_by_role('button',name='Назначить',exact=True).click()
             expect(ship.locator('[data-confirm]')).to_have_count(0)
             driver.bring_to_front()
             driver.get_by_role('button',name='Обновить',exact=True).click()
-            expect(driver.get_by_text('Разгрузка: Условная выгрузка 2',exact=False)).to_be_visible()
+            until=driver.locator('[data-month-grid]')
+            if day[:7]!=date.today().strftime('%Y-%m'):
+                driver.locator('[data-dispatch="monthNext"]').click()
+            expect(until).to_have_attribute('data-month-grid',day[:7])
+            driver.locator('[data-dispatch="driverDay"][data-id="'+day+'"]').click()
+            driver.locator('.d31job [data-dispatch="detail"]').first.click()
+            expect(driver.get_by_role('dialog')).to_contain_text('Условная выгрузка 2')
+            expect(driver.get_by_role('dialog')).to_contain_text('08:45')
+            close(driver)
+            driver.get_by_role('button',name='Внести отпуск',exact=True).click()
+            leave=(date.fromisoformat(day)+timedelta(days=3)).isoformat()
+            driver.get_by_label('Первый день',exact=True).fill(leave)
+            driver.get_by_label('Последний день включительно',exact=True).fill(leave)
+            driver.get_by_role('button',name='Сохранить отпуск',exact=True).click()
+            expect(driver.locator('[data-dispatch="driverDay"][data-id="'+leave+'"]')).to_contain_text('Отпуск')
             # Price is filtered by the real API, rather than hidden in the page.
             ds=driver.request.get(base+'/api/state').json()
             assert all(offer['price']==0 for offer in ds['offers'])
             ship.bring_to_front()
-            ship.get_by_role('button',name='Показать все поля заявки',exact=True).click()
+            ship.locator('.d31queue [data-dispatch="detail"]').first.click()
             ship.locator('[data-complete]').first.click()
             expect(ship.locator('[data-complete]')).to_have_count(0)
-            expect(ship.locator('.decision .h-title')).to_have_text('Рейс завершён')
+            ship.locator('.d31queue [data-dispatch="detail"]').first.click()
+            expect(ship.get_by_role('dialog')).to_contain_text('Завершена')
+            close(ship)
             # All three actual account sessions have an active browser audio graph.
             for page in (ship,carrier,driver):
                 print(json.dumps({'audio':page.evaluate('({visible:document.visibilityState,enabled:state.soundOn,engine:audioContext?.state,count:document.documentElement.dataset.soundCount,unread:state.notifications.filter(n=>!n.read).length})'),'case':case_name},ensure_ascii=False),flush=True)
@@ -240,7 +271,7 @@ def run_case(playwright,engine_name,viewport,case_name):
                 expect(page.get_by_test_id('account-badge')).to_contain_text(key+'@example.test')
             assert not errors,errors
             return {'case':case_name,'engine':engine_name,'viewport':viewport,'passed':True,
-                    'checks':['registration 3 roles','shipper adds carrier','carrier adds shipper','driver joins carrier',
+                    'checks':['registration 3 roles with INN','driver monthly calendar and leave','driver counteroffer and shipper queue decision','shipper adds carrier','carrier adds shipper','driver joins carrier',
                               'employee registers by link','vehicle creation','order-driver-selection-completion','driver price privacy',
                               'customer invites driver','persistent single invitation','archive/restore invitations','private participant comments',
                               'remove driver from pool','account identity each role','audio graph and loud test tone','password recovery 3 roles',
