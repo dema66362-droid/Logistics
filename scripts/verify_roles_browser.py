@@ -156,8 +156,16 @@ def run_case(playwright,engine_name,viewport,case_name):
             ship.locator('[data-invitation-row="'+invitation_id+'"] [data-archive-invite]').click()
             expect(ship.locator('details summary')).to_contain_text('Архив приглашений')
             ship.locator('details summary').click()
+            # Exercise a slow real restore after the user has already closed this dialog.
+            restore_pattern='**/api/participants/invitations/'+invitation_id+'/restore'
+            held_restores=[]
+            ship.route(restore_pattern,lambda route:held_restores.append(route))
             ship.locator('[data-invitation-row="'+invitation_id+'"] [data-restore-invite]').click()
             close(ship)
+            assert len(held_restores)==1
+            with ship.expect_response(lambda response:response.url.endswith('/'+invitation_id+'/restore')):
+                held_restores[0].continue_()
+            ship.unroute(restore_pattern)
             participants(carrier)
             carrier.get_by_role('button',name='+ Машина',exact=True).click()
             carrier.get_by_label('Обозначение машины',exact=True).fill('QA А001АА')
