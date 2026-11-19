@@ -201,6 +201,7 @@ def run_case(playwright,engine_name,viewport,case_name):
             ship.get_by_role('button',name='Показать все поля заявки',exact=True).click()
             ship.locator('[data-complete]').first.click()
             expect(ship.locator('[data-complete]')).to_have_count(0)
+            expect(ship.locator('.decision .h-title')).to_have_text('Рейс завершён')
             # All three actual account sessions have an active browser audio graph.
             for page in (ship,carrier,driver):
                 print(json.dumps({'audio':page.evaluate('({visible:document.visibilityState,enabled:state.soundOn,engine:audioContext?.state,count:document.documentElement.dataset.soundCount,unread:state.notifications.filter(n=>!n.read).length})'),'case':case_name},ensure_ascii=False),flush=True)
@@ -243,7 +244,7 @@ def run_case(playwright,engine_name,viewport,case_name):
                               'employee registers by link','vehicle creation','order-driver-selection-completion','driver price privacy',
                               'customer invites driver','persistent single invitation','archive/restore invitations','private participant comments',
                               'remove driver from pool','account identity each role','audio graph and loud test tone','password recovery 3 roles',
-                              'logout','no JS errors','no horizontal overflow']}
+                              'completed order summary matches actual status','logout','no JS errors','no horizontal overflow']}
         except Exception:
             for key,page in pages.items():
                 try:
