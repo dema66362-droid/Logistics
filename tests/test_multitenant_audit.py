@@ -52,7 +52,7 @@ def order(c, csrf, day, *, budget=100000, to='Новый город', public=Fal
 def offer(c, csrf, ref, driver, vehicle, day, budget=100000):
     return post(c, csrf, '/api/offers', {
         'order_ref':ref, 'driver_id':driver, 'vehicle_id':vehicle,
-        'day':day, 'pickup':'08:30', 'end_date':day,
+        'day':day, 'pickup':'09:00', 'end_date':day,
         'price':budget, 'accept_terms':True})
 
 

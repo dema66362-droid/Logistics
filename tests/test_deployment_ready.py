@@ -93,7 +93,7 @@ assert all(ref in [o["id"] for o in c.get("/api/state").json()["orders"]] for c 
 from app import SessionLocal,Shipment,Offer
 with SessionLocal() as db:
  s=db.query(Shipment).filter_by(ref=ref).one();start=s.pickup_date.isoformat();end=s.unload_date.isoformat()
-q1=post(c1,"/api/offers",{"order_ref":ref,"driver_id":1,"vehicle_id":1,"day":start,"pickup":"09:30","end_date":end,"price":90000,"accept_terms":True})
+q1=post(c1,"/api/offers",{"order_ref":ref,"driver_id":1,"vehicle_id":1,"day":start,"pickup":"10:00","end_date":end,"price":90000,"accept_terms":True})
 assert q1.status_code==201,q1.text
 id1=int(q1.json()["id"].removeprefix("Q-"))
 assert post(d1,f"/api/offers/{id1}/driver-response?accepted=true").status_code==200

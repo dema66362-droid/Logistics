@@ -22,7 +22,7 @@ def accounts(tmp_path, monkeypatch):
     monkeypatch.setenv('LOGISTIK_SECURE_COOKIE','0')
     def register(role,email=None,**extra):
         client=TestClient(core.app)
-        payload=dict(role=role,email=email or role+'@example.test',password=PASSWORD,
+        payload=dict(inn="0000000018",role=role,email=email or role+'@example.test',password=PASSWORD,
                      name='Тестовый '+role,organization='Тестовая '+role)
         payload.update(extra)
         response=client.post('/api/signup',json=payload)
@@ -76,7 +76,7 @@ def test_unregistered_partner_joins_by_personal_link(accounts):
     c=TestClient(core.app)
     info=c.post('/api/participants/invitation-info',json={'token':token(inv)})
     assert info.status_code==200 and info.json()['registered'] is False
-    payload=dict(role='shipper',name='Новый заказчик',organization='Новый заказчик ООО',email='new-shipper@example.test',password=PASSWORD,invitation_token=token(inv))
+    payload=dict(inn='0000000018',role='shipper',name='Новый заказчик',organization='Новый заказчик ООО',email='new-shipper@example.test',password=PASSWORD,invitation_token=token(inv))
     assert c.post('/api/signup',json={**payload,'email':'wrong@example.test'}).status_code==403
     assert c.post('/api/signup',json=payload).status_code==201
     assert carrier.get('/api/participants').json()['partners'][0]['name']=='Новый заказчик ООО'
@@ -116,7 +116,10 @@ def test_driver_requests_carrier_and_cannot_be_stolen(accounts):
     assert driver.post('/api/login',json=dict(email='driver@example.test',password=PASSWORD)).status_code==200
     assert state(driver)['user']['org_id']==state(carrier)['user']['org_id']
     assert post(other,'/api/participants/invitations',dict(email='driver@example.test',kind='team',role='driver')).status_code==409
-    assert post(driver,'/api/participants/invitations',dict(email='other@example.test',kind='driver_join',role='carrier')).status_code==409
+    second=invite(driver,'other@example.test','driver_join','carrier')
+    assert respond(other,second).status_code==200
+    assert state(driver)['user']['org_id']==state(carrier)['user']['org_id']
+    assert len(driver.get('/api/participants').json()['companies'])==2
 
 def test_invitation_lifecycle_expiry_revocation_and_rotation(accounts):
     owner=accounts('shipper');carrier=accounts('carrier');inv=invite(owner,'carrier@example.test','partner','carrier')

@@ -36,7 +36,7 @@ def create_order(client,csrf,product='Вода техническая',day='2026
 
 def create_offer(client,csrf,ref,day='2026-12-02',driver_id=1,vehicle_id=1,price=90000):
     return request(client,csrf,'/api/offers',{'order_ref':ref,'driver_id':driver_id,'vehicle_id':vehicle_id,
-             'day':day,'pickup':'08:30','end_date':day,'price':price,'accept_terms':True})
+             'day':day,'pickup':'09:00','end_date':day,'price':price,'accept_terms':True})
 
 def test_auth_permissions_and_csrf():
     guest=TestClient(app)
@@ -203,7 +203,7 @@ def test_carrier_and_driver_get_full_addresses_only_after_assignment():
     ref=r.json()['id']
     assert request(ship,sc,f'/api/orders/{ref}/search',{'public_external':False}).status_code==200
     bid=request(carrier,cc,'/api/offers',{'order_ref':ref,'driver_id':2,'vehicle_id':2,
-        'day':day,'pickup':'09:00','end_date':day,'price':82000,'accept_terms':True})
+        'day':day,'pickup':'10:00','end_date':day,'price':82000,'accept_terms':True})
     assert bid.status_code==201,bid.text
     qid=int(bid.json()['id'][2:])
     hidden=next(x for x in driver.get('/api/state').json()['orders'] if x['id']==ref)
