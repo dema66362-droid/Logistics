@@ -281,6 +281,7 @@ document.addEventListener('submit',async e=>{
     form.dataset.sending='1';
     const submit=form.querySelector('[type=submit]');submit.disabled=true;
     const kind=form.dataset.dispatchForm,f=form31,values=new FormData(form),d=Object.fromEntries(values);
+    let message='Сохранено';
     try{
         if(kind==='inn'){
             await api('/api/account/inn','POST',{inn:d.inn});account29=await api('/api/account');render();toast('ИНН сохранён');return;
@@ -289,6 +290,7 @@ document.addEventListener('submit',async e=>{
         if(kind==='slot'){
             await api('/api/orders/'+encodeURIComponent(f.ref)+'/slot','POST',{day:d.day,time:d.time,expected_day:f.day,expected_time:f.time,offer_id:d.offer?Number(d.offer):null});
             if(state.user.role==='shipper'){state.day=d.day;dayFilter31=''}
+            else message='Встречное время отправлено заказчику';
         } else if(kind==='roster')await api('/api/carrier/roster','POST',{name:d.name,email:d.email||''});
         else if(kind==='rosterContact')await api('/api/carrier/roster/'+Number(f.id)+'/contact','POST',{email:d.email});
         else if(kind==='leave'){await api('/api/driver/leave','POST',{start:d.start,end:d.end});state.day=d.start;}
@@ -297,7 +299,7 @@ document.addEventListener('submit',async e=>{
             if(!ids.length&&!d.search)throw Error('Выберите перевозчика или поиск по машинам');
             if(ids.length&&d.search)throw Error('Выберите адресную отправку или поиск по машинам');
             const result=await api('/api/orders/'+encodeURIComponent(f.ref)+(o.hazardous?'/request-review':'/search'),'POST',ids.length?{carrier_ids:ids}:{public_external:!!o.publicExternal});
-            await loadState();toast(result.notified===0?'Поиск запущен. Подходящих получателей пока нет.':'Заявка отправлена');return;
+            message=result.notified===0?'Поиск запущен. Подходящих получателей пока нет.':'Заявка отправлена';
         } else if(kind==='manual'){
             const v=state.vehicles.find(v=>v.id===Number(d.vehicle));
             await api('/api/carrier/plan/trips','POST',{request_id:f.request,driver_id:Number(d.driver),vehicle_id:v.id,customer:d.customer,
@@ -305,10 +307,35 @@ document.addEventListener('submit',async e=>{
                     pickup_company:d.sender,pickup_address:d.pickupAddress,pickup_contact:d.pickupContact||'',recipient:d.recipient,delivery_address:d.deliveryAddress,recipient_contact:d.deliveryContact,terms:d.terms}});
             state.day=d.day;detailDriver31=Number(d.driver);
         }
-        await loadState();toast(kind==='slot'&&state.user.role!=='shipper'?'Встречное время отправлено заказчику':'Сохранено');
+        if(state.user?.id!==f.owner)return;
+        if(form31===f&&state.modal==='dispatch:'+kind){
+            // Read the committed period immediately, even when a notification is already in flight.
+            planCache31.version=-1;
+            closeModal();
+        }
+        await loadState({fromEvent:true});toast(message);
     }catch(err){const target=form.querySelector('[role=alert]');if(target)target.textContent=err.message;else errorToast(err)}
     finally{delete form.dataset.sending;if(submit.isConnected)submit.disabled=false;}
 },{capture:true});
+// A notification arriving during a foreground refresh must not supersede its form completion.
+const readState31=loadState;
+let activeStateRead31=null;
+loadState=async function(options={}){
+    const generation=authGeneration;
+    if(options.fromEvent){
+        if(activeStateRead31?.generation===generation){activeStateRead31.refreshAgain=true;return;}
+        return readState31(options);
+    }
+    const ticket={generation,refreshAgain:activeStateRead31?.generation===generation && !!activeStateRead31.refreshAgain};
+    activeStateRead31=ticket;
+    try{return await readState31(options);}
+    finally{
+        if(activeStateRead31===ticket){
+            activeStateRead31=null;
+            if(ticket.refreshAgain && generation===authGeneration && state.user)loadState({fromEvent:true}).catch(()=>{});
+        }
+    }
+};
 const originalSignOut31=showLogin;
 showLogin=function(){form31={};planCache31.request++;planCache31.key='';planCache31.data=null;detailDriver31=0;dayFilter31='';fullColumns31=false;originalSignOut31()};
 startApp();
