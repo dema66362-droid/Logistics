@@ -246,7 +246,9 @@ def run_case(playwright,engine_name,viewport,case_name):
                               'logout','no JS errors','no horizontal overflow']}
         except Exception:
             for key,page in pages.items():
-                try: page.screenshot(path=str(ARTIFACTS/f'FAILED-{case_name}-{key}.png'),full_page=True)
+                try:
+                    print(json.dumps({'diagnostic_role':key,'case':case_name,'audio':page.evaluate('({visible:document.visibilityState,enabled:state.soundOn,engine:audioContext?.state,count:document.documentElement.dataset.soundCount,error:document.documentElement.dataset.audioError})')},ensure_ascii=False),flush=True)
+                    page.screenshot(path=str(ARTIFACTS/f'FAILED-{case_name}-{key}.png'),full_page=True)
                 except Exception:pass
             log.flush();log.seek(0);print(log.read()[-9000:])
             raise
@@ -260,9 +262,9 @@ def run_case(playwright,engine_name,viewport,case_name):
 
 def main():
     ARTIFACTS.mkdir(parents=True,exist_ok=True)
-    cases=[('chromium',{'width':1440,'height':1000},'chromium-desktop'),
+    cases=[('firefox',{'width':1440,'height':1000},'firefox-desktop'),
+           ('chromium',{'width':1440,'height':1000},'chromium-desktop'),
            ('chromium',{'width':390,'height':844},'chromium-mobile'),
-           ('firefox',{'width':1440,'height':1000},'firefox-desktop'),
            ('webkit',{'width':1440,'height':1000},'webkit-desktop')]
     selected=os.getenv('LOGISTIK_QA_BROWSER_CASE','')
     if selected:cases=[case for case in cases if case[2]==selected]
