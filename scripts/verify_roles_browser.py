@@ -66,8 +66,11 @@ def invitation(page,kind_role,email):
 
 def accept(page):
     participants(page)
-    page.get_by_role('button',name='Принять приглашение',exact=True).click()
-    expect(page.get_by_role('dialog').get_by_text('Принято',exact=False).last).to_be_visible()
+    pending=page.locator('[data-invitation-row]').filter(has=page.get_by_role('button',name='Принять приглашение',exact=True))
+    invitation_id=pending.get_attribute('data-invitation-row')
+    pending.get_by_role('button',name='Принять приглашение',exact=True).click()
+    # Wait for THIS response, rather than an earlier accepted invitation.
+    expect(page.locator('[data-invitation-row="'+invitation_id+'"]')).to_contain_text('Принято')
     close(page)
 
 def run_case(playwright,engine_name,viewport,case_name):
@@ -90,7 +93,10 @@ def run_case(playwright,engine_name,viewport,case_name):
                 if proc.poll() is not None: raise RuntimeError('Test server stopped')
                 time.sleep(.1)
             else: raise RuntimeError('Test server not ready')
-            browser=getattr(playwright,engine_name).launch()
+            launch={}
+            if engine_name=='chromium' and os.getenv('LOGISTIK_QA_CHROMIUM_EXECUTABLE'):
+                launch['executable_path']=os.environ['LOGISTIK_QA_CHROMIUM_EXECUTABLE']
+            browser=getattr(playwright,engine_name).launch(**launch)
             def new_page(key):
                 ctx=browser.new_context(viewport=viewport,locale='ru-RU')
                 contexts.append(ctx);page=ctx.new_page();page.set_default_timeout(12000)
