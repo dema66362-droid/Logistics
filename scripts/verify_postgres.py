@@ -40,6 +40,8 @@ def run():
     if not url:
         raise SystemExit('UNVERIFIED: LOGISTIK_QA_DATABASE_URL is required for PostgreSQL QA')
     if url.startswith('postgres://'): url = 'postgresql://' + url[len('postgres://'):]
+    if url.startswith('postgresql://'):
+        url = 'postgresql+psycopg2://' + url[len('postgresql://'):]
     database = create_engine(url, pool_pre_ping=True)
     schemas = ['logistik_qa_' + uuid.uuid4().hex for _ in range(2)]
     created, processes, clients = [], [], []
