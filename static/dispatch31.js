@@ -268,8 +268,9 @@ document.addEventListener('click',async e=>{
             if(verb==='cancel'&&!window.confirm('Отменить этот рейс?'))return;
             await api('/api/carrier/plan/trips/'+encodeURIComponent(id)+'/'+verb,'POST');
         } else return;
-        await loadState();
-        if(action==='unlink'||action==='leaveCompany')await openParticipants();
+        const changedRoster=action==='unlink'||action==='leaveCompany';
+        await loadState({fromEvent:changedRoster});
+        if(changedRoster)await refreshParticipants();
         toast(action==='approveSlot'?'Новое время внесено в очередь':action==='rejectSlot'?'В очереди сохранено прежнее время':'Сохранено');
     }catch(err){errorToast(err)}finally{if(btn.isConnected)btn.disabled=false}
 },{capture:true});
