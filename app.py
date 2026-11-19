@@ -473,7 +473,7 @@ def notify_shipment_action(db:Session,actor:User,shipment:Shipment,action:str):
             'auto_assigned':'Назначен перевозчик','offer_withdrawn':'Предложение отозвано',
             'offer_rejected':'Предложение отклонено','order_cancelled':'Заявка отменена',
             'slot_proposed':'Требуется согласование времени', 'slot_accepted':'Время подачи согласовано',
-            'slot_rejected':'Сохранено прежнее время подачи','slot_changed':'Заказчик изменил время подачи',
+            'slot_withdrawn':'Участник принял время заказчика','slot_rejected':'Сохранено прежнее время подачи','slot_changed':'Заказчик изменил время подачи',
             'completed':'Рейс завершён','carrier_declined':'Перевозчик отклонил заявку','cargo_review_requested':'Заявка на проверку допуска','cargo_review_received':'Перевозчик получил запрос на проверку','carrier_access_revoked':'Изменён допуск перевозчика'}
     internal=db.get(InternalTrip,shipment.id)
     if internal:
@@ -716,7 +716,7 @@ def get_state(user=Depends(user_session)):
 def dashboard_state(user,period=None):
     with SessionLocal() as db:
         if user['role']=='shipper':
-            shipments=db.scalars(select(Shipment).where(Shipment.shipper_id==user['org_id']).order_by(Shipment.pickup_date,Shipment.id)).all()
+            shipments=db.scalars(select(Shipment).where(Shipment.shipper_id==user['org_id']).order_by(func.coalesce(Shipment.slot_day,Shipment.pickup_date),Shipment.id)).all()
             visible_ids=[s.id for s in shipments]
             offers=db.scalars(select(Offer).where(Offer.shipment_id.in_(visible_ids))).all() if visible_ids else []
             drivers=[]; vehicles=[]
@@ -1087,11 +1087,26 @@ def propose_or_set_slot(ref:str,payload:SlotIn,request:Request,user=Depends(user
         current=official_slot(s,selected)
         if current!=(payload.expected_day,payload.expected_time):
             invalid('Заказчик уже изменил время. Обновите карточку и проверьте очередь')
-        if (payload.day,payload.time)==current:return {'ok':True,'changed':False}
+        if (payload.day,payload.time)==current:
+            if role=='shipper':return {'ok':True,'changed':False}
+            cid=q.carrier_id if q else actor.org_id
+            mine=select(SlotProposal).where(SlotProposal.shipment_id==s.id,SlotProposal.carrier_id==cid,
+                                             SlotProposal.actor_id==actor.id,SlotProposal.status=='pending')
+            own=db.scalars(mine).all()
+            for old in own:old.status='withdrawn'
+            adjust=bool(q and q.status in ('waiting_driver','driver_ok') and (q.pickup_date,q.pickup_time)!=current
+                        and not open_dispute(db,s,q))
+            if adjust:
+                last=q.delivery_day or max(s.unload_date,q.pickup_date)
+                if not business_today()<=current[0]<=min(last,q.end_date) or conflicts(db,q.driver_id,q.vehicle_id,current[0],q.end_date,
+                        exclude_shipment=s.id,include_driver_accepted=True):invalid('Экипаж недоступен в даты заказчика')
+                q.pickup_date,q.pickup_time=current
+            if own or adjust:audit(db,actor,s,'slot_withdrawn',f'{current[0]} {current[1]}')
+            return {'ok':True,'changed':bool(own or adjust)}
+
         if role=='shipper':
             update_slot(db,s,payload.day,payload.time)
-            db.execute(update(SlotProposal).where(SlotProposal.shipment_id==s.id,SlotProposal.status=='pending',
-                SlotProposal.day==payload.day,SlotProposal.time==payload.time).values(status='approved'))
+            db.execute(update(SlotProposal).where(SlotProposal.shipment_id==s.id,SlotProposal.status=='pending').values(status='superseded'))
             audit(db,actor,s,'slot_changed',f'{payload.day} {payload.time}')
             return {'ok':True,'changed':True}
         deadline=(q.delivery_day or max(s.unload_date,q.pickup_date)) if q else s.unload_date
@@ -1116,8 +1131,7 @@ def decide_slot(ref:str,proposal_id:int,payload:SlotDecision,request:Request,use
         if payload.accepted:
             update_slot(db,s,item.day,item.time,q)
             db.execute(update(SlotProposal).where(SlotProposal.shipment_id==s.id,SlotProposal.status=='pending',
-                SlotProposal.id!=item.id,((SlotProposal.carrier_id==item.carrier_id) |
-                ((SlotProposal.day==item.day)&(SlotProposal.time==item.time)))).values(status='superseded'))
+                SlotProposal.id!=item.id).values(status='superseded'))
         elif q and q.status in ('waiting_driver','driver_ok') and (q.pickup_date,q.pickup_time)!=(official_slot(s)):
             # Neither party has committed resources at the rejected time.
             q.status='rejected'
