@@ -51,7 +51,7 @@ def run():
                 connection.execute(text('CREATE SCHEMA ' + schema)); created.append(schema)
         env = {key: value for key, value in os.environ.items() if not key.startswith('LOGISTIK_')}
         env.update(LOGISTIK_DATABASE_URL=schema_url(url, schemas[0]), LOGISTIK_DEMO='0',
-                   LOGISTIK_DEPLOYMENT='pilot', LOGISTIK_ALLOW_SIGNUP='0', LOGISTIK_SECURE_COOKIE='0')
+                   LOGISTIK_DEPLOYMENT='pilot', LOGISTIK_ALLOW_SIGNUP='1', LOGISTIK_SECURE_COOKIE='0')
         seed = 'from pilot_data import create_pilot_data; create_pilot_data(' + repr(PASSWORDS) + ')'
         def execute(args, current_env=env):
             result = subprocess.run([sys.executable, *args], cwd=ROOT, env=current_env,
@@ -69,14 +69,14 @@ def run():
             processes.append(process); base = f'http://127.0.0.1:{port}'; bases.append(base)
             for _ in range(100):
                 try:
-                    if httpx.get(base + '/health', timeout=.5).status_code == 200: break
+                    if httpx.get(base + '/health', timeout=.5,trust_env=False).status_code == 200: break
                 except httpx.HTTPError: pass
                 if process.poll() is not None: raise AssertionError('QA server failed at startup')
                 time.sleep(.1)
             else: raise AssertionError('QA server startup timed out')
 
         def actor(email, server=0):
-            client = httpx.Client(base_url=bases[server], timeout=20); clients.append(client)
+            client = httpx.Client(base_url=bases[server], timeout=20,trust_env=False); clients.append(client)
             check(client.post('/api/login', json={'email': email, 'password': PASSWORDS[email]}), 200, 'login')
             state = check(client.get('/api/state'), 200, 'initial state')
             return client, state['csrf'], state
@@ -128,10 +128,41 @@ def run():
         assert sorted(response.status_code for response in responses) == [200, 409]
 
         # Login attempts survive changes of worker and successful unrelated logins.
-        guest = httpx.Client(base_url=bases[0], timeout=20); clients.append(guest)
+        guest = httpx.Client(base_url=bases[0], timeout=20,trust_env=False); clients.append(guest)
         for index in range(9):
             response = guest.post(bases[index % 2] + '/api/login', json={'email': 'unknown@example.test', 'password': 'Invalid-test-password'})
             assert response.status_code == (401 if index < 8 else 429)
+        # New role registration/reciprocal consent uses the same PostgreSQL DB
+        # through two independent server processes, including concurrent writes.
+        new_actors={}
+        for index,role in enumerate(('shipper','carrier','driver')):
+            c=httpx.Client(base_url=bases[index%2],timeout=20,trust_env=False);clients.append(c)
+            payload={'role':role,'email':'new-'+role+'@example.test','name':'Новый '+role,
+                     'organization':'Новая '+role,'password':'Isolated-PG-Registration-2026!'}
+            check(c.post('/api/signup',json=payload),201,'register '+role)
+            st=check(c.get('/api/state'),200,'new '+role+' session')
+            assert st['user']['role']==role
+            new_actors[role]=(c,st['csrf'],st)
+        new_ship,new_carrier,new_driver=(new_actors[r] for r in ('shipper','carrier','driver'))
+        invitation=check(post(new_carrier,'/api/participants/invitations',{
+            'kind':'partner','role':'shipper','email':'new-shipper@example.test'}),201,'carrier adds shipper')
+        assert new_carrier[0].get('/api/participants').json()['partners']==[]
+        other=httpx.Client(base_url=bases[1],timeout=20,trust_env=False);clients.append(other)
+        check(other.post('/api/login',json={'email':'new-shipper@example.test','password':'Isolated-PG-Registration-2026!'}),200,'second shipper device')
+        other_state=other.get('/api/state').json();second=(other,other_state['csrf'],other_state)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            answers=list(pool.map(lambda who:post(who,f"/api/participants/invitations/{invitation['id']}/respond",{'accepted':True}),(new_ship,second)))
+        assert sorted(r.status_code for r in answers)==[200,409]
+        assert len(new_carrier[0].get('/api/participants').json()['partners'])==1
+        reverse=check(post(new_ship,'/api/participants/invitations',{
+            'kind':'partner','role':'carrier','email':ACCOUNTS[3][0]}),201,'shipper adds carrier')
+        check(post(carriers[1],f"/api/participants/invitations/{reverse['id']}/respond",{'accepted':True}),200,'carrier accepts')
+        join=check(post(new_driver,'/api/participants/invitations',{
+            'kind':'driver_join','role':'carrier','email':'new-carrier@example.test'}),201,'driver requests carrier')
+        check(post(new_carrier,f"/api/participants/invitations/{join['id']}/respond",{'accepted':True}),200,'carrier adds driver')
+        assert new_driver[0].get('/api/state').status_code==401
+        check(new_driver[0].post('/api/login',json={'email':'new-driver@example.test','password':'Isolated-PG-Registration-2026!'}),200,'driver after membership change')
+        assert new_driver[0].get('/api/state').json()['user']['org_id']==new_carrier[2]['user']['org_id']
         with tempfile.TemporaryDirectory(prefix='logistik_pg_restore_') as directory:
             snapshot = str(Path(directory) / 'snapshot.json')
             execute(['backup_db.py', 'backup', snapshot])
@@ -139,10 +170,11 @@ def run():
             execute(['backup_db.py', 'restore', snapshot, '--confirm-empty-database'], recovery_env)
             execute(['-c', "from app import *; from sqlalchemy import select,func; "
                      "db=SessionLocal(); assert db.scalar(select(func.count()).select_from(Shipment))==3; "
+                     "assert db.scalar(select(func.count()).select_from(ParticipantInvitation))==0; "
                      "assert db.scalar(select(func.count()).select_from(WebSession))==0; db.close(); "
                      "db=SessionLocal(); x=Organization(name='Проверка последовательности',kind='shipper'); "
                      "db.add(x); db.commit(); assert x.id>3; db.close()"], recovery_env)
-        print('PASS: PostgreSQL, 2 server processes, single assignment, exclusive driver hold, durable login throttle, backup recovery and sequences')
+        print('PASS: PostgreSQL, 2 server processes, single assignment, exclusive driver hold, durable login throttle, registration 3 roles, reciprocal invitations, concurrent consent, driver membership, backup recovery and sequences')
     finally:
         for client in clients: client.close()
         for process in processes:
