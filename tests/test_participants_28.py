@@ -52,7 +52,7 @@ def test_register_login_logout_each_role(accounts,role):
     assert data['orders']==[] and data['offers']==[]
     assert post(client,'/api/logout').status_code==200
     assert client.get('/api/state').status_code==401
-    assert client.post('/api/login',json=dict(email=role+'@example.test',password=PASSWORD)).status_code==200
+    assert client.post('/api/login',json=dict(email=' MAILTO:'+role.upper()+'@EXAMPLE.TEST ',password=PASSWORD)).status_code==200
     assert state(client)['user']['role']==role
 
 @pytest.mark.parametrize('from_role,to_role',[('shipper','carrier'),('carrier','shipper')])
