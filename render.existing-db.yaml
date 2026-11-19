@@ -1,0 +1,41 @@
+# Closed synthetic pilot in the confirmed Render workspace.
+# References the existing logistik-pilot-db; does not create or manage a database.
+# Render generates five independent passwords. Retrieve them only in Environment.
+services:
+  - type: web
+    name: logistik-pilot-site
+    runtime: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt -c constraints.txt
+    startCommand: bash start_render.sh
+    healthCheckPath: /health
+    autoDeployTrigger: 'off'
+    envVars:
+      - key: LOGISTIK_DEPLOYMENT
+        value: pilot
+      - key: LOGISTIK_DEMO
+        value: "0"
+      - key: LOGISTIK_ALLOW_SIGNUP
+        value: "0"
+      - key: LOGISTIK_SECURE_COOKIE
+        value: "1"
+      - key: LOGISTIK_ALLOWED_HOSTS
+        fromService:
+          name: logistik-pilot-site
+          type: web
+          envVarKey: RENDER_EXTERNAL_HOSTNAME
+      - key: LOGISTIK_DATABASE_URL
+        fromDatabase:
+          name: logistik-pilot-db
+          property: connectionString
+      - key: LOGISTIK_TEST_SHIPPER_PASSWORD
+        generateValue: true
+      - key: LOGISTIK_TEST_CARRIER1_PASSWORD
+        generateValue: true
+      - key: LOGISTIK_TEST_DRIVER1_PASSWORD
+        generateValue: true
+      - key: LOGISTIK_TEST_CARRIER2_PASSWORD
+        generateValue: true
+      - key: LOGISTIK_TEST_DRIVER2_PASSWORD
+        generateValue: true
