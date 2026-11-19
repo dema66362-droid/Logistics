@@ -1,5 +1,14 @@
 /* Functional additions use the approved stylesheet without altering its rules. */
 let account29=null,extraNotes29=[],moreNotes29=true,code29='',codeEmail29='',soundOwner29=null,pushBound29='';
+// Realtime updates may arrive between pointer-down and click. Keep the target
+// connected until the click handler has received the user's action.
+let pointerActive29=false,pendingRender29=false;
+const baseRender29=render;
+render=function(){if(pointerActive29){pendingRender29=true;return}pendingRender29=false;baseRender29()};
+document.addEventListener('pointerdown',()=>{pointerActive29=true},{capture:true});
+const releasePointer29=()=>setTimeout(()=>{pointerActive29=false;if(pendingRender29)render()},0);
+for(const type of ['pointerup','pointercancel'])document.addEventListener(type,releasePointer29,{capture:true});
+window.addEventListener('blur',releasePointer29);
 const readLocal29=(key,fallback)=>{try{return localStorage.getItem(key)??fallback}catch{return fallback}};
 const writeLocal29=(key,value)=>{try{localStorage.setItem(key,String(value))}catch{}};
 const soundKey29=()=>`logistik.sound.${state.user?.id||0}`;
@@ -33,7 +42,7 @@ loadState=async function(options={}){
  if(soundOwner29!==state.user.id){const uid=state.user.id,generation=authGeneration;soundOwner29=uid;state.soundOn=readLocal29(soundKey29(),'1')!=='0';state.soundVolume=Number(readLocal29(soundKey29()+'.volume','1'))||1;const account=await api('/api/account');if(state.user?.id!==uid||generation!==authGeneration)return;account29=account;authChannel29?.postMessage({userId:uid});if(!state.modal)render()}
  beep();if(Notification29()&&Notification.permission==='granted'&&config.pushEnabled)bindExistingPush29().catch(()=>{});
 };
-function unlockAudio29(){try{if(!audioContext||audioContext.state==='closed')audioContext=new (window.AudioContext||window.webkitAudioContext)();const promise=audioContext.resume();if(promise)promise.then(()=>{if(state.user)beep()}).catch(()=>{});return audioContext}catch{return null}}
+function unlockAudio29(){try{if(!audioContext||audioContext.state==='closed')audioContext=new (window.AudioContext||window.webkitAudioContext)();const promise=audioContext.resume();if(promise)promise.then(()=>{if(state.user)beep()}).catch(error=>{document.documentElement.dataset.audioError=error.name});return audioContext}catch(error){document.documentElement.dataset.audioError=error.name;return null}}
 function playSound29(force=false){
  if(!force&&!state.soundOn)return false;const audio=audioContext;if(!audio||audio.state!=='running')return false;
  const uid=state.user?.id;if(!uid)return false;const highest=Math.max(0,...state.notifications.filter(n=>!n.read).map(n=>n.id));
