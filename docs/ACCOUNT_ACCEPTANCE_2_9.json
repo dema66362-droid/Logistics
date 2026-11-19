@@ -1,0 +1,221 @@
+{
+  "release": "2.9.0",
+  "date": "2026-11-19",
+  "timezone": "Europe/Moscow",
+  "repository": "dema66362-droid/Logistics",
+  "source_commit": "86cf475ec9a89c84bf8c72c71375d4818ca69b8d",
+  "ci": {
+    "run_id": 44542194861,
+    "url": "https://github.com/dema66362-droid/Logistics/actions/runs/44542194861",
+    "conclusion": "success",
+    "api_tests": 85,
+    "third_party_warnings": 2,
+    "http_sessions": 5,
+    "push_worker_checks": 8,
+    "postgresql": "17; two independent servers; concurrent invitation uniqueness and single-use recovery, permissions and backup/restore",
+    "artifact": {
+      "id": 14537699254,
+      "name": "role-workflows-2.9",
+      "size_in_bytes": 1350162,
+      "url": "https://api.github.com/repos/dema66362-droid/Logistics/actions/artifacts/14537699254",
+      "archive_download_url": "https://api.github.com/repos/dema66362-droid/Logistics/actions/artifacts/14537699254/zip",
+      "expired": false,
+      "created_at": "2026-11-19T14:20:25Z",
+      "expires_at": "2026-12-03T14:20:24Z",
+      "updated_at": "2026-11-19T14:20:25Z",
+      "digest": "sha256:386f724e89f8dff8ac6da9999685a409a629d2b93963932ae5fd826f347cd8bf",
+      "workflow_run": {
+        "id": 44542194861,
+        "repository_id": 1462677959,
+        "head_repository_id": 1462677959,
+        "head_branch": "main",
+        "head_sha": "86cf475ec9a89c84bf8c72c71375d4818ca69b8d"
+      }
+    },
+    "browsers": [
+      {
+        "case": "firefox-desktop",
+        "engine": "firefox",
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "passed": true,
+        "checks": [
+          "registration 3 roles",
+          "shipper adds carrier",
+          "carrier adds shipper",
+          "driver joins carrier",
+          "employee registers by link",
+          "vehicle creation",
+          "order-driver-selection-completion",
+          "driver price privacy",
+          "customer invites driver",
+          "persistent single invitation",
+          "archive/restore invitations",
+          "private participant comments",
+          "remove driver from pool",
+          "account identity each role",
+          "audio graph and loud test tone",
+          "password recovery 3 roles",
+          "completed order summary matches actual status",
+          "logout",
+          "no JS errors",
+          "no horizontal overflow"
+        ]
+      },
+      {
+        "case": "chromium-desktop",
+        "engine": "chromium",
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "passed": true,
+        "checks": [
+          "registration 3 roles",
+          "shipper adds carrier",
+          "carrier adds shipper",
+          "driver joins carrier",
+          "employee registers by link",
+          "vehicle creation",
+          "order-driver-selection-completion",
+          "driver price privacy",
+          "customer invites driver",
+          "persistent single invitation",
+          "archive/restore invitations",
+          "private participant comments",
+          "remove driver from pool",
+          "account identity each role",
+          "audio graph and loud test tone",
+          "password recovery 3 roles",
+          "completed order summary matches actual status",
+          "logout",
+          "no JS errors",
+          "no horizontal overflow"
+        ]
+      },
+      {
+        "case": "chromium-mobile",
+        "engine": "chromium",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "passed": true,
+        "checks": [
+          "registration 3 roles",
+          "shipper adds carrier",
+          "carrier adds shipper",
+          "driver joins carrier",
+          "employee registers by link",
+          "vehicle creation",
+          "order-driver-selection-completion",
+          "driver price privacy",
+          "customer invites driver",
+          "persistent single invitation",
+          "archive/restore invitations",
+          "private participant comments",
+          "remove driver from pool",
+          "account identity each role",
+          "audio graph and loud test tone",
+          "password recovery 3 roles",
+          "completed order summary matches actual status",
+          "logout",
+          "no JS errors",
+          "no horizontal overflow"
+        ]
+      },
+      {
+        "case": "webkit-desktop",
+        "engine": "webkit",
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "passed": true,
+        "checks": [
+          "registration 3 roles",
+          "shipper adds carrier",
+          "carrier adds shipper",
+          "driver joins carrier",
+          "employee registers by link",
+          "vehicle creation",
+          "order-driver-selection-completion",
+          "driver price privacy",
+          "customer invites driver",
+          "persistent single invitation",
+          "archive/restore invitations",
+          "private participant comments",
+          "remove driver from pool",
+          "account identity each role",
+          "audio graph and loud test tone",
+          "password recovery 3 roles",
+          "completed order summary matches actual status",
+          "logout",
+          "no JS errors",
+          "no horizontal overflow"
+        ]
+      }
+    ]
+  },
+  "deployment": {
+    "service_id": "srv-dbvdav6k1f9s73c7nihg",
+    "deploy_id": "dep-dbvgbgs9v7es739l1c00",
+    "source_commit": "86cf475ec9a89c84bf8c72c71375d4818ca69b8d",
+    "status": "live",
+    "finished_at_utc": "2026-11-19T14:22:04.851351Z"
+  },
+  "live_checks": {
+    "url": "https://logistik-pilot-site.onrender.com/",
+    "health": {
+      "status": "ok",
+      "service": "logistik",
+      "version": "2.9.0"
+    },
+    "config": {
+      "version": "2.9.0",
+      "signupEnabled": true,
+      "roles": [
+        "shipper",
+        "carrier",
+        "driver"
+      ],
+      "emailDelivery": false,
+      "recoveryMethod": "one_time_code",
+      "pushEnabled": true,
+      "pushPublicKeyPresent": true
+    },
+    "anonymous_state": "Необходим вход",
+    "recovery_form_visible": true,
+    "login_form_visible_after_final_deploy": true,
+    "checked_at_utc": "2026-11-19T14:23:33.239Z",
+    "direct_service_worker_navigation": "Cloud browser blocked direct script navigation with ERR_BLOCKED_BY_CLIENT; no workaround attempted",
+    "console_application_errors": [],
+    "console_browser_extension_metadata_errors": true
+  },
+  "scope": {
+    "authenticated_workflows": "Real forms and API in isolated synthetic SQLite/PostgreSQL databases; no API mocks",
+    "audio_output": "Virtual PulseAudio sink in CI, real Web Audio graph; physical speaker audibility not confirmed",
+    "provider_delivery": "Real encryption/VAPID with controlled transport; actual Google/Mozilla/Apple device delivery not confirmed",
+    "live_role_accounts_created_by_agent": false,
+    "existing_passwords_reset": false,
+    "physical_device_acceptance": false,
+    "css_rules_changed": false,
+    "automatic_email_delivery": false,
+    "vapid_public_key_matches_prepared_key": true
+  },
+  "limitations": [
+    "Previously saved recovery code is required; existing forgotten password without a code has no automated email reset",
+    "Browser/OS sound and notification permissions, silent mode, network and session expiry can limit delivery",
+    "Free Render service can idle; delivery requires a running server",
+    "No physical Android/iPhone/PC notification delivery acceptance",
+    "Hazardous/unknown cargo and production acceptance remain outside this pilot"
+  ],
+  "hosting": {
+    "plan": "free",
+    "database_expires_at_utc": "2026-12-19T08:34:42.007012Z",
+    "database_public_access_enabled": false,
+    "extra_database_created": false
+  }
+}
