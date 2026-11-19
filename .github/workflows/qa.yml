@@ -58,7 +58,10 @@ jobs:
       - name: Install browser test dependencies
         run: python3 -m pip install --break-system-packages -r requirements-browser.txt -c constraints.txt
       - name: Real registration and role workflows in desktop and mobile browsers
-        run: python3 scripts/verify_roles_browser.py
+        run: |
+          mkdir -p artifacts/roles-2.8 data
+          chown -R pwuser:pwuser artifacts/roles-2.8 data
+          runuser -u pwuser -- python3 scripts/verify_roles_browser.py
       - uses: actions/upload-artifact@v7
         if: always()
         with:
