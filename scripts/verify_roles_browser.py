@@ -151,6 +151,7 @@ def run_case(playwright,engine_name,viewport,case_name):
             # Price is filtered by the real API, rather than hidden in the page.
             ds=driver.request.get(base+'/api/state').json()
             assert all(offer['price']==0 for offer in ds['offers'])
+            ship.get_by_role('button',name='Показать все поля заявки',exact=True).click()
             ship.locator('[data-complete]').first.click()
             expect(ship.locator('[data-complete]')).to_have_count(0)
             for key in ('shipper','carrier','driver'):
