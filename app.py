@@ -369,7 +369,7 @@ def login(payload: LoginIn, request: Request, response: Response):
     origin = request.headers.get('origin')
     if origin and origin.rstrip('/') != str(request.base_url).rstrip('/'):
         forbidden('Источник входа не совпадает с адресом сайта')
-    email = payload.email.strip().removeprefix('mailto:').lower()
+    email = payload.email.strip().lower().removeprefix('mailto:')
     host = request.client.host if request.client else 'unknown'
     keys = [(sha_token('ip:' + host), 40), (sha_token('account:' + email), 8)]
     now = datetime.now(timezone.utc)
