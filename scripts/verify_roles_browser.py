@@ -27,6 +27,7 @@ def field(page,form,name,value):
     page.locator(f'#{form} [name="{name}"]').fill(value)
 
 def register(page,base,role,email,name,company):
+    page.bring_to_front()
     page.goto(base,wait_until='domcontentloaded')
     page.get_by_role('button',name='Регистрация пользователя',exact=True).click()
     page.get_by_label('Роль',exact=True).select_option(role)
@@ -47,6 +48,7 @@ def register(page,base,role,email,name,company):
     return recovery_code
 
 def participants(page):
+    page.bring_to_front()
     page.get_by_role('button',name='Участники',exact=True).click()
     expect(page.get_by_role('dialog',name='Участники',exact=True)).to_be_visible()
 
@@ -164,6 +166,7 @@ def run_case(playwright,engine_name,viewport,case_name):
             expect(carrier.get_by_role('dialog',name='Участники').get_by_text('QA А001АА',exact=True)).to_be_visible()
             close(carrier)
             # Full safe cargo dispatch from the newly registered accounts.
+            ship.bring_to_front()
             ship.get_by_role('button',name='Новая заявка',exact=False).click()
             day=(date.today()+timedelta(days=10)).isoformat()
             for name,value in dict(to='Тестовый город Б',pickupAddress='Условная погрузка 1',deliveryAddress='Условная выгрузка 2',date=day,unload=day,recipient='Учебный склад',recipientContact='Тестовый контакт',terms='Учебные условия',budget='100000').items(): field(ship,'newForm',name,value)
@@ -172,29 +175,35 @@ def run_case(playwright,engine_name,viewport,case_name):
             expect(ship.locator('#newForm')).to_have_count(0)
             ship.locator('[data-search-order]').first.click()
             expect(ship.locator('[data-search-order]')).to_have_count(0)
+            carrier.bring_to_front()
             carrier.get_by_role('button',name='Обновить',exact=True).click()
             carrier.locator('[data-bid]').first.click()
             field(carrier,'bidForm','price','90000')
             carrier.locator('#bidForm [name="acceptTerms"]').check()
             carrier.get_by_role('button',name='Отправить водителю',exact=True).click()
             expect(carrier.locator('#bidForm')).to_have_count(0)
+            driver.bring_to_front()
             driver.get_by_role('button',name='Обновить',exact=True).click()
             driver.get_by_role('button',name='Подтверждаю',exact=False).click()
             expect(driver.locator('[data-driver-ok]')).to_have_count(0)
+            ship.bring_to_front()
             ship.get_by_role('button',name='Обновить',exact=True).click()
             ship.locator('[data-select-quote]').first.click()
             ship.get_by_role('button',name='Назначить',exact=True).click()
             expect(ship.locator('[data-confirm]')).to_have_count(0)
+            driver.bring_to_front()
             driver.get_by_role('button',name='Обновить',exact=True).click()
             expect(driver.get_by_text('Разгрузка: Условная выгрузка 2',exact=False)).to_be_visible()
             # Price is filtered by the real API, rather than hidden in the page.
             ds=driver.request.get(base+'/api/state').json()
             assert all(offer['price']==0 for offer in ds['offers'])
+            ship.bring_to_front()
             ship.get_by_role('button',name='Показать все поля заявки',exact=True).click()
             ship.locator('[data-complete]').first.click()
             expect(ship.locator('[data-complete]')).to_have_count(0)
             # All three actual account sessions have an active browser audio graph.
             for page in (ship,carrier,driver):
+                print(json.dumps({'audio':page.evaluate('({visible:document.visibilityState,enabled:state.soundOn,engine:audioContext?.state,count:document.documentElement.dataset.soundCount,unread:state.notifications.filter(n=>!n.read).length})'),'case':case_name},ensure_ascii=False),flush=True)
                 expect(page.locator('html')).to_have_attribute('data-sound-count',re.compile('[1-9][0-9]*'))
             # Removal changes the relevant pool, preserving the driver's login.
             participants(ship)
@@ -204,6 +213,7 @@ def run_case(playwright,engine_name,viewport,case_name):
             close(ship)
             for key in ('shipper','carrier','driver'):
                 page=pages[key]
+                page.bring_to_front()
                 expect(page.get_by_test_id('account-badge')).to_contain_text(key+'@example.test')
                 page.locator('[data-account]').click()
                 expect(page.get_by_role('dialog',name='Учётная запись',exact=True)).to_contain_text(key+'@example.test')
