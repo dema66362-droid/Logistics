@@ -133,3 +133,21 @@ def test_number_of_roster_cards_and_monthly_tenant_boundary(accounts):
         assert r.status_code==201
     assert len(state(car)['drivers'])==105 and state(outsider)['drivers']==[]
     assert len(car.get('/api/participants').json()['roster'])==105
+
+
+def test_only_one_shipper_decision_can_move_a_disputed_slot(accounts):
+    ship,first,second=accounts('shipper'),accounts('carrier'),accounts('carrier','second@example.test')
+    link(ship,first,'carrier@example.test');link(ship,second,'second@example.test')
+    ref,day=new_order(ship)
+    targets=[state(c)['user']['org_id'] for c in (first,second)]
+    assert post(ship,'/api/orders/'+ref+'/search',{'carrier_ids':targets}).status_code==200
+    url='/api/orders/'+ref+'/slot'
+    p=post(first,url,slot(day,'08:10')).json()['id']
+    q=post(second,url,slot(day,'11:00')).json()['id']
+    assert post(ship,url+'/'+str(p),{'accepted':True}).status_code==200
+    assert post(ship,url+'/'+str(q),{'accepted':True}).status_code==409
+    assert all(state(c)['orders'][0]['time']=='08:10' for c in (ship,first,second))
+    # Returning to the existing official time withdraws only the sender's objection.
+    assert post(first,url,slot(day,'10:05','08:10')).status_code==200
+    assert post(first,url,slot(day,'08:10','08:10')).json()['changed']
+    assert not state(ship)['orders'][0]['slotProposals']
