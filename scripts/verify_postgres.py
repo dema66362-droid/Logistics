@@ -93,7 +93,7 @@ def run():
             quote = check(post(carrier, '/api/offers', {
                 'order_ref': 'TEST-1001', 'driver_id': state['drivers'][0]['id'],
                 'vehicle_id': state['vehicles'][0]['id'], 'day': order['date'],
-                'pickup': '11:00', 'end_date': order['unload'], 'price': 95000 + index * 1000,
+                'pickup': order['time'], 'end_date': order['unload'], 'price': 95000 + index * 1000,
                 'accept_terms': True}), 201, 'create proposal')
             quotes.append(int(quote['id'].split('-')[1]))
             check(post(drivers[index], f'/api/offers/{quotes[-1]}/driver-response?accepted=true'), 200, 'driver confirms')
@@ -137,7 +137,7 @@ def run():
         new_actors={};recovery_codes={}
         for index,role in enumerate(('shipper','carrier','driver')):
             c=httpx.Client(base_url=bases[index%2],timeout=20,trust_env=False);clients.append(c)
-            payload={'role':role,'email':'new-'+role+'@example.test','name':'Новый '+role,
+            payload={'inn':'0000000018','role':role,'email':'new-'+role+'@example.test','name':'Новый '+role,
                      'organization':'Новая '+role,'password':'Isolated-PG-Registration-2026!'}
             registered=check(c.post('/api/signup',json=payload),201,'register '+role)
             recovery_codes[role]=registered['recoveryCode']

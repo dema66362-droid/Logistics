@@ -18,7 +18,7 @@ from sqlalchemy import func, select, text
 from app import Base, db_write, engine
 
 EXCLUDED = {'web_sessions', 'login_throttles', 'push_subscriptions', 'push_deliveries'}
-ADDITIVE_TABLES = {'participant_invitations','shipper_drivers','participant_comments','recovery_codes'}
+ADDITIVE_TABLES = {'participant_invitations','shipper_drivers','participant_comments','recovery_codes','dispatch_recipients','carrier_roster','internal_trips','slot_proposals','driver_leave'}
 
 
 def tables():
@@ -68,12 +68,24 @@ def restore(path: Path, *, confirm_empty: bool):
     if snapshot.get('format') != 1 or present-expected or not expected-present<=ADDITIVE_TABLES:
         raise ValueError('Incompatible snapshot format or tables')
     for name in expected-present:snapshot['tables'][name]=[]
+    historical_offers={row['id']:row for row in snapshot['tables']['offers']}
     for table in tables():
         columns = set(table.columns.keys())
         if table.name == 'users':
             for row in snapshot['tables']['users']:
                 if set(row) == columns - {'is_admin'}:
                     row['is_admin'] = row['role'] in ('shipper', 'carrier')
+        if table.name=='organizations':
+            for row in snapshot['tables'][table.name]:row.setdefault('inn', None)
+        if table.name=='shipments':
+            for row in snapshot['tables'][table.name]:
+                bid=historical_offers.get(row.get('selected_offer_id')) or {}
+                row.setdefault('slot_day',bid.get('pickup_date'))
+                row.setdefault('slot_time',bid.get('pickup_time'))
+                row.setdefault('pickup_company','')
+                row.setdefault('pickup_contact','')
+        if table.name=='offers':
+            for row in snapshot['tables'][table.name]:row.setdefault('delivery_day',None)
         if table.name == 'notifications':
             for row in snapshot['tables'][table.name]:
                 if set(row)==columns-{'event_key'}:row['event_key']=None

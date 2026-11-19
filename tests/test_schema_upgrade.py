@@ -28,7 +28,7 @@ s=c.get('/api/state').json()
 assert s['user']['id']==1 and s['user']['is_admin'] and s['user']['name']=='Сохранённый логист'
 assert c.get('/api/participants').status_code==200
 assert c.get('/api/account').json()['recoveryCodeReady'] is False
-assert c.get('/health').json()['version']=='2.9.0'
+assert c.get('/health').json()['version']=='3.1.0'
 with SessionLocal() as db:
  assert db.get(SchemaMigration,'0029')
  assert 'event_key' in {column['name'] for column in inspect(engine).get_columns('notifications')}
