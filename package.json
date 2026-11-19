@@ -1,0 +1,8 @@
+{
+  "name": "logistik-pilot",
+  "private": true,
+  "version": "2.7.0",
+  "scripts": {
+    "dev": ".venv/bin/python scripts/dev_server.py"
+  }
+}

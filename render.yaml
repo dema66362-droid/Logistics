@@ -1,0 +1,44 @@
+# «Логистик» test installation. Only fake, non-dangerous cargo data.
+# This Blueprint creates a FREE web service and FREE Postgres DB.
+# Not for production; the free database EXPIRES after 30 days.
+services:
+  - type: web
+    name: logistik-pilot-site
+    runtime: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt -c constraints.txt
+    startCommand: bash start_render.sh
+    healthCheckPath: /health
+    autoDeployTrigger: 'off'
+    envVars:
+      - key: LOGISTIK_DEPLOYMENT
+        value: pilot
+      - key: LOGISTIK_DEMO
+        value: "0"
+      - key: LOGISTIK_ALLOW_SIGNUP
+        value: "0"
+      - key: LOGISTIK_SECURE_COOKIE
+        value: "1"
+      - key: LOGISTIK_ALLOWED_HOSTS
+        value: "*.onrender.com"
+      - key: LOGISTIK_DATABASE_URL
+        fromDatabase:
+          name: logistik-pilot-db
+          property: connectionString
+      - key: LOGISTIK_TEST_SHIPPER_PASSWORD
+        sync: false
+      - key: LOGISTIK_TEST_CARRIER1_PASSWORD
+        sync: false
+      - key: LOGISTIK_TEST_DRIVER1_PASSWORD
+        sync: false
+      - key: LOGISTIK_TEST_CARRIER2_PASSWORD
+        sync: false
+      - key: LOGISTIK_TEST_DRIVER2_PASSWORD
+        sync: false
+
+databases:
+  - name: logistik-pilot-db
+    region: frankfurt
+    plan: free
+    ipAllowList: []
