@@ -43,6 +43,8 @@ jobs:
         run: python -m pytest -q
       - name: Five independent sessions through HTTP
         run: python verify_multiuser_http.py
+      - name: Web Push foreground and background delivery decisions
+        run: node scripts/verify_push_worker.js
       - name: PostgreSQL concurrency and recovery
         env:
           LOGISTIK_QA_DATABASE_URL: postgresql://logistik_ci:local_ci_only_password@127.0.0.1:5432/logistik_ci
