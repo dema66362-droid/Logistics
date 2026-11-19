@@ -32,6 +32,9 @@ BASE = Path(__file__).resolve().parent
 DB_URL = os.environ.get('LOGISTIK_DATABASE_URL', f'sqlite:///{BASE / "data" / "logistik.sqlite3"}')
 if DB_URL.startswith('postgres://'):
     DB_URL = 'postgresql://' + DB_URL[len('postgres://'):]
+# SQLAlchemy 2.1 defaults to psycopg 3; this release installs psycopg2.
+if DB_URL.startswith('postgresql://'):
+    DB_URL = 'postgresql+psycopg2://' + DB_URL[len('postgresql://'):]
 VERSION = '2.7.0'
 BUSINESS_TZ = ZoneInfo(os.environ.get('LOGISTIK_TIMEZONE', 'Europe/Moscow'))
 
