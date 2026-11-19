@@ -4,3 +4,5 @@ SQLAlchemy>=2.0,<3
 pydantic>=2.0,<3
 
 psycopg2-binary>=2.9,<3
+
+pywebpush>=2.5,<3

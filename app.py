@@ -2,6 +2,7 @@
 from __future__ import annotations
 import csv
 import asyncio
+import base64
 import json
 import hashlib
 import hmac
@@ -10,9 +11,10 @@ import math
 import os
 import re
 import secrets
+import sys
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -25,7 +27,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy import (func, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer,
                         Numeric, String, Text, UniqueConstraint, create_engine, delete, event,
-                        inspect, select, text)
+                        inspect, select, text, update)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -36,7 +38,7 @@ if DB_URL.startswith('postgres://'):
 # SQLAlchemy 2.1 defaults to psycopg 3; this release installs psycopg2.
 if DB_URL.startswith('postgresql://'):
     DB_URL = 'postgresql+psycopg2://' + DB_URL[len('postgresql://'):]
-VERSION = '2.8.0'
+VERSION = '2.9.0'
 BUSINESS_TZ = ZoneInfo(os.environ.get('LOGISTIK_TIMEZONE', 'Europe/Moscow'))
 
 def business_today():
@@ -101,6 +103,54 @@ class ParticipantInvitation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sender_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    recipient_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class ShipperDriver(Base):
+    __tablename__ = 'shipper_drivers'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    shipper_id: Mapped[int] = mapped_column(ForeignKey('organizations.id'))
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    __table_args__ = (UniqueConstraint('shipper_id','user_id'),)
+
+class ParticipantComment(Base):
+    __tablename__ = 'participant_comments'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    subject: Mapped[str] = mapped_column(String(80))
+    body: Mapped[str] = mapped_column(Text, default='')
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('user_id','subject'),)
+
+class RecoveryCode(Base):
+    __tablename__ = 'recovery_codes'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'),index=True)
+    code_hash: Mapped[str] = mapped_column(String(64),unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
+
+class PushSubscription(Base):
+    __tablename__ = 'push_subscriptions'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'),index=True)
+    endpoint_hash: Mapped[str] = mapped_column(String(64),unique=True)
+    endpoint: Mapped[str] = mapped_column(Text)
+    p256dh: Mapped[str] = mapped_column(String(180))
+    auth: Mapped[str] = mapped_column(String(100))
+    session_hash: Mapped[str] = mapped_column(String(64))
+    active: Mapped[bool] = mapped_column(Boolean,default=True)
+
+class PushDelivery(Base):
+    __tablename__ = 'push_deliveries'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    notification_id: Mapped[int] = mapped_column(ForeignKey('notifications.id'))
+    subscription_id: Mapped[int] = mapped_column(ForeignKey('push_subscriptions.id'))
+    status: Mapped[str] = mapped_column(String(20),default='pending')
+    attempts: Mapped[int] = mapped_column(Integer,default=0)
+    next_attempt: Mapped[datetime] = mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint('notification_id','subscription_id'),)
 
 class WebSession(Base):
     __tablename__ = 'web_sessions'
@@ -214,6 +264,8 @@ class Notification(Base):
     message: Mapped[str] = mapped_column(String(300))
     read: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    event_key: Mapped[str | None] = mapped_column(String(100),nullable=True)
+    __table_args__ = (UniqueConstraint('user_id','event_key'),)
 
 def initialize_schema():
     """Idempotent additive pilot migration, serialized against other app workers."""
@@ -224,11 +276,13 @@ def initialize_schema():
             conn.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': PILOT_WRITE_LOCK})
         Base.metadata.create_all(conn)
         latest = conn.scalar(select(func.max(SchemaMigration.version)))
-        if latest and latest > '0028':
+        if latest and latest > '0029':
             raise RuntimeError('Database schema is newer than this application release')
         for table, definitions in {
             'shipments': {'pickup_address':"VARCHAR(300) NOT NULL DEFAULT ''",'delivery_address':"VARCHAR(300) NOT NULL DEFAULT ''",'recipient_contact':"VARCHAR(200) NOT NULL DEFAULT ''",'terms':"TEXT NOT NULL DEFAULT ''",'terms_version':'INTEGER NOT NULL DEFAULT 1','public_external':'BOOLEAN NOT NULL DEFAULT 0','search_launched':'BOOLEAN NOT NULL DEFAULT 0','tariff_source':"VARCHAR(30) NOT NULL DEFAULT 'manual'"},
-            'offers': {'terms_accepted':'BOOLEAN NOT NULL DEFAULT 0','accepted_terms_version':'INTEGER NOT NULL DEFAULT 0'}
+            'offers': {'terms_accepted':'BOOLEAN NOT NULL DEFAULT 0','accepted_terms_version':'INTEGER NOT NULL DEFAULT 0'},
+            'participant_invitations': {'sender_archived':'BOOLEAN NOT NULL DEFAULT 0','recipient_archived':'BOOLEAN NOT NULL DEFAULT 0'},
+            'notifications': {'event_key':'VARCHAR(100)'}
         }.items():
             fields={column['name'] for column in inspect(conn).get_columns(table)}
             for col,defn in definitions.items():
@@ -243,9 +297,23 @@ def initialize_schema():
             conn.execute(text("UPDATE users SET is_admin = :yes WHERE role IN ('shipper','carrier')"), {'yes': True})
         if not conn.scalar(select(SchemaMigration.version).where(SchemaMigration.version == '0028')):
             conn.execute(SchemaMigration.__table__.insert().values(version='0028', applied_at=datetime.now(timezone.utc)))
+        conn.exec_driver_sql('CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_event ON notifications (user_id,event_key)')
+        if not conn.scalar(select(SchemaMigration.version).where(SchemaMigration.version == '0029')):
+            conn.execute(SchemaMigration.__table__.insert().values(version='0029', applied_at=datetime.now(timezone.utc)))
 
 initialize_schema()
-app = FastAPI(title='Логистик MVP', docs_url=None, redoc_url=None, openapi_url=None)
+
+@asynccontextmanager
+async def lifespan(application):
+    from push_delivery import delivery_loop
+    task=asyncio.create_task(delivery_loop(sys.modules[__name__]))
+    try: yield
+    finally:
+        task.cancel()
+        try: await task
+        except asyncio.CancelledError: pass
+
+app = FastAPI(title='Логистик MVP', docs_url=None, redoc_url=None, openapi_url=None,lifespan=lifespan)
 
 @app.exception_handler(SQLAlchemyError)
 async def database_unavailable(request: Request, exc: SQLAlchemyError):
@@ -268,6 +336,7 @@ async def privacy_headers(request: Request, call_next):
 def db_write():
     with WRITE_LOCK:
         with SessionLocal() as db:
+            db.info['event_id']=secrets.token_hex(16)
             if IS_SQLITE:
                 db.execute(text('BEGIN IMMEDIATE'))
             elif engine.dialect.name == 'postgresql':
@@ -304,9 +373,47 @@ def invalid(msg='Недопустимое действие', code=409):
 
 def audit(db: Session, actor: User, shipment: Shipment, action: str, details: str = ''):
     db.add(Audit(org_id=actor.org_id, actor_id=actor.id, shipment_id=shipment.id, action=action, details=details))
+    notify_shipment_action(db,actor,shipment,action)
 
 def note_user(db:Session, user_id:int, shipment_id:int|None, kind:str, title:str, msg:str):
-    db.add(Notification(user_id=user_id, shipment_id=shipment_id, kind=kind, title=title, message=msg))
+    if not user_id: return
+    key=f"{db.info.setdefault('event_id',secrets.token_hex(16))}:{shipment_id}" if shipment_id is not None else None
+    existing=db.scalar(select(Notification).where(Notification.user_id==user_id,Notification.event_key==key)) if key else None
+    if existing:
+        existing.kind=kind;existing.title=title;existing.message=msg
+        return
+    note=Notification(user_id=user_id,shipment_id=shipment_id,kind=kind,title=title,message=msg,event_key=key)
+    db.add(note);db.flush()
+    for subscription in db.scalars(select(PushSubscription).where(PushSubscription.user_id==user_id,PushSubscription.active.is_(True))):
+        db.add(PushDelivery(notification_id=note.id,subscription_id=subscription.id))
+
+def notify_shipment_action(db:Session,actor:User,shipment:Shipment,action:str):
+    labels={'created':'Создана заявка','imported':'Импортирована заявка','search_launched':'Начат поиск машины',
+            'offer_created':'Добавлено предложение','driver_ok':'Водитель подтвердил доступность',
+            'driver_declined':'Водитель отклонил предложение','assigned':'Назначен перевозчик',
+            'auto_assigned':'Назначен перевозчик','offer_withdrawn':'Предложение отозвано',
+            'offer_rejected':'Предложение отклонено','order_cancelled':'Заявка отменена',
+            'completed':'Рейс завершён','carrier_access_revoked':'Изменён допуск перевозчика'}
+    recipients={u.id for u in db.scalars(select(User).where(User.org_id==shipment.shipper_id,User.role=='shipper',User.active.is_(True)))}
+    # Notify all parties to this order, including losing bidders, using no prices,
+    # private addresses, contact information, or competitor identities.
+    bids=db.scalars(select(Offer).where(Offer.shipment_id==shipment.id)).all()
+    carriers={q.carrier_id for q in bids}
+    for q in bids:
+        driver=db.get(Driver,q.driver_id)
+        account=db.get(User,driver.user_id) if driver and driver.user_id else None
+        if account and account.active:recipients.add(account.id)
+    if action=='search_launched':
+        carriers.update(a.carrier_id for a in db.scalars(select(Approval).where(Approval.shipper_id==shipment.shipper_id,Approval.active.is_(True))))
+        if shipment.public_external:
+            carriers.update(o.id for o in db.scalars(select(Organization).where(Organization.kind=='carrier')) if fleet_suitable(db,shipment,o.id))
+        carriers={cid for cid in carriers if fleet_suitable(db,shipment,cid)}
+    for cid in carriers:
+        recipients.update(u.id for u in db.scalars(select(User).where(User.org_id==cid,User.role=='carrier',User.active.is_(True))))
+    recipients.add(actor.id)
+    title=labels.get(action,'Заявка обновлена')
+    for uid in recipients:
+        note_user(db,uid,shipment.id,'new_order' if action=='search_launched' else 'assigned' if action=='auto_assigned' else action,title,f'{shipment.ref}: {title.lower()}. Откройте свой кабинет.')
 
 def note_org(db:Session, org_id:int, role:str, shipment_id:int|None, kind:str, title:str, msg:str):
     for u in db.scalars(select(User).where(User.org_id==org_id,User.role==role,User.active.is_(True))):
@@ -538,6 +645,7 @@ def get_state(user=Depends(user_session)):
                 'drivers':[{'id':d.id,'name':d.name,'userId':d.user_id} for d in drivers],
                 'vehicles':[{'id':v.id,'label':v.label,'kind':v.kind,'capacity':float(v.capacity)} for v in vehicles],
                 'notifications':[{'id':n.id,'kind':n.kind,'title':n.title,'message':n.message,'read':n.read,'orderId':db.get(Shipment,n.shipment_id).ref if n.shipment_id else None} for n in notes],
+                'unreadNotifications':db.scalar(select(func.count()).select_from(Notification).where(Notification.user_id==user['id'],Notification.read.is_(False))) or 0,
                 'day':business_today().isoformat()}
 
 @app.get('/api/events')
@@ -573,6 +681,22 @@ def read_note(note_id:int,request:Request,user=Depends(user_session)):
         note=db.get(Notification,note_id)
         if not note or note.user_id!=user['id']:raise HTTPException(404,detail='Уведомление не найдено')
         note.read=True
+    return {'ok':True}
+
+@app.get('/api/notifications')
+def notification_history(before:int=0,user=Depends(user_session)):
+    if before<0:invalid('Некорректный указатель истории',422)
+    with SessionLocal() as db:
+        query=select(Notification).where(Notification.user_id==user['id'])
+        if before:query=query.where(Notification.id<before)
+        notes=db.scalars(query.order_by(Notification.id.desc()).limit(51)).all()
+        return {'hasMore':len(notes)>50,'notifications':[{'id':n.id,'kind':n.kind,'title':n.title,
+                'message':n.message,'read':n.read,'orderId':db.get(Shipment,n.shipment_id).ref if n.shipment_id else None} for n in notes[:50]]}
+
+@app.post('/api/notifications/read-all')
+def read_all_notifications(request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    with db_write() as db:db.execute(update(Notification).where(Notification.user_id==user['id']).values(read=True))
     return {'ok':True}
 
 class CreateShipment(BaseModel):
@@ -746,6 +870,8 @@ def create_offer(payload:CreateOffer,request:Request,user=Depends(user_session))
         if existing:invalid('Ваша организация уже подала предложение по заявке')
         d=db.get(Driver,payload.driver_id);v=db.get(Vehicle,payload.vehicle_id)
         if not d or not v or d.org_id!=user['org_id'] or v.org_id!=user['org_id']:forbidden('Чужой водитель или автомобиль')
+        driver_account=db.get(User,d.user_id) if d.user_id else None
+        if not driver_account or not driver_account.active:invalid('Учётная запись водителя недоступна')
         if v.kind!=s.vehicle_kind or v.capacity<s.tons:invalid('Тип или грузоподъёмность транспорта не соответствуют заявке')
         if payload.end_date<payload.day:invalid('Конец рейса раньше начала',422)
         if payload.day < business_today():invalid('Дата подачи не может быть в прошлом',422)
@@ -1089,8 +1215,7 @@ def attach_team(db: Session, target: User, org_id: int):
     if target.role!='driver' or old_org.kind!='driver': invalid('Этот участник уже состоит в другой компании')
     driver=db.scalar(select(Driver).where(Driver.user_id==target.id))
     if not driver: invalid('Профиль водителя не найден')
-    if db.scalar(select(Offer.id).where(Offer.driver_id==driver.id).limit(1)):
-        invalid('Водителя с историей рейсов нельзя переводить автоматически')
+    if driver_busy(db,driver.id):invalid('Сначала завершите действующие предложения и рейсы водителя')
     driver.org_id=org_id;target.org_id=org_id;target.is_admin=False
     # A second device must refresh the changed membership before continuing.
     db.execute(delete(WebSession).where(WebSession.user_id==target.id))
@@ -1098,7 +1223,7 @@ def attach_team(db: Session, target: User, org_id: int):
 def accept_invitation(db: Session, inv: ParticipantInvitation, recipient: User):
     check_invitation(inv)
     sender=db.get(User,inv.sender_user_id)
-    if not sender or not sender.active or sender.org_id!=inv.sender_org_id:
+    if not sender or not sender.active or (sender.org_id!=inv.sender_org_id and inv.kind!='driver_join'):
         invalid('Автор приглашения больше не имеет доступа к компании')
     if recipient.role!=inv.target_role or recipient.email!=inv.target_email: forbidden('Приглашение предназначено другому участнику')
     if inv.kind=='partner':
@@ -1111,6 +1236,11 @@ def accept_invitation(db: Session, inv: ParticipantInvitation, recipient: User):
     elif inv.kind=='driver_join':
         if recipient.role!='carrier' or not recipient.is_admin: forbidden('Подключить водителя может руководитель перевозчика')
         attach_team(db,sender,recipient.org_id)
+    elif inv.kind=='shipper_driver':
+        if sender.role!='shipper' or recipient.role!='driver':forbidden()
+        link=db.scalar(select(ShipperDriver).where(ShipperDriver.shipper_id==sender.org_id,ShipperDriver.user_id==recipient.id))
+        if link:link.active=True
+        else:db.add(ShipperDriver(shipper_id=sender.org_id,user_id=recipient.id,active=True))
     else: invalid('Неизвестный вид приглашения')
     inv.status='accepted';inv.target_user_id=recipient.id;inv.responded_at=datetime.now(timezone.utc)
     note_user(db,sender.id,None,'invitation_accepted','Приглашение принято','Участник подтвердил подключение')
@@ -1118,8 +1248,11 @@ def accept_invitation(db: Session, inv: ParticipantInvitation, recipient: User):
 
 @app.get('/api/config')
 def public_config():
+    from push_delivery import public_key
     return {'version':VERSION,'signupEnabled':os.getenv('LOGISTIK_ALLOW_SIGNUP','0')=='1',
-            'roles':['shipper','carrier','driver'],'emailDelivery':False}
+            'roles':['shipper','carrier','driver'],'emailDelivery':False,
+            'recoveryMethod':'one_time_code','pushPublicKey':public_key(),
+            'pushEnabled':bool(public_key())}
 
 @app.post('/api/signup',status_code=201)
 def register_account(payload:Signup,request:Request,response:Response):
@@ -1150,13 +1283,15 @@ def register_account(payload:Signup,request:Request,response:Response):
             if payload.role!='carrier' or not admin or not all(fields): invalid('Для машины заполните тип, обозначение и грузоподъёмность',422)
             db.add(Vehicle(org_id=org.id,label=clean_label(payload.vehicle_label,3),kind=payload.vehicle_kind,capacity=payload.capacity_tons))
         if inv: accept_invitation(db,inv,account)
+        recovery_code=mint_recovery_code(db,account.id)
         db.add(WebSession(token_hash=sha_token(token),user_id=account.id,csrf=csrf,expires=datetime.now(timezone.utc)+timedelta(days=7)))
     response.set_cookie('logistik_session',token,httponly=True,samesite='strict',
                         secure=os.getenv('LOGISTIK_SECURE_COOKIE','0')=='1',max_age=7*86400,path='/')
-    return {'ok':True,'message':'Кабинет создан. Подключите участников в разделе «Участники».'}
+    return {'ok':True,'message':'Кабинет создан. Сохраните резервный код для восстановления пароля.',
+            'recoveryCode':recovery_code}
 
 class InviteIn(BaseModel):
-    kind: Literal['partner','team','driver_join']
+    kind: Literal['partner','team','driver_join','shipper_driver']
     role: Literal['shipper','carrier','driver']
     email: str = Field(min_length=6,max_length=180)
 
@@ -1170,7 +1305,8 @@ def invitation_dict(db: Session, inv: ParticipantInvitation, outgoing: bool):
     if status=='pending' and inv.expires.replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc): status='expired'
     return {'id':inv.id,'kind':inv.kind,'role':inv.target_role,'email':inv.target_email,
             'status':status,'outgoing':outgoing,'organization':org.name,'sender':sender.name,
-            'expires':inv.expires.isoformat(),'respondedAt':inv.responded_at.isoformat() if inv.responded_at else None}
+            'expires':inv.expires.isoformat(),'respondedAt':inv.responded_at.isoformat() if inv.responded_at else None,
+            'subject':f'invitation:{inv.id}'}
 
 @app.get('/api/participants')
 def list_participants(user=Depends(user_session)):
@@ -1180,21 +1316,43 @@ def list_participants(user=Depends(user_session)):
             clauses=[Approval.active.is_(True),Approval.shipper_id==user['org_id']] if user['role']=='shipper' else [Approval.active.is_(True),Approval.carrier_id==user['org_id']]
             for a in db.scalars(select(Approval).where(*clauses)):
                 org=db.get(Organization,a.carrier_id if user['role']=='shipper' else a.shipper_id)
-                partners.append({'id':org.id,'name':org.name,'role':org.kind})
+                partners.append({'id':org.id,'name':org.name,'role':org.kind,'subject':f'organization:{org.id}'})
         team=[]
         if user['role']!='driver':
-            team=[{'id':u.id,'name':u.name,'email':u.email,'role':u.role,'active':u.active,'admin':u.is_admin}
+            team=[{'id':u.id,'name':u.name,'email':u.email,'role':u.role,'active':u.active,'admin':u.is_admin,'subject':f'user:{u.id}'}
                   for u in db.scalars(select(User).where(User.org_id==user['org_id']))]
-        invitations=[]
+        invitations=[];archived=[]
+        source_scope=ParticipantInvitation.sender_user_id==user['id'] if user['role']=='driver' else ParticipantInvitation.sender_org_id==user['org_id']
         for inv in db.scalars(select(ParticipantInvitation).where(
-                (ParticipantInvitation.sender_user_id==user['id']) | (ParticipantInvitation.target_user_id==user['id'])).order_by(ParticipantInvitation.id.desc()).limit(100)):
-            invitations.append(invitation_dict(db,inv,inv.sender_user_id==user['id']))
+                source_scope | (ParticipantInvitation.target_user_id==user['id'])).order_by(ParticipantInvitation.id.desc())):
+            outgoing=inv.sender_user_id==user['id'] if user['role']=='driver' else inv.sender_org_id==user['org_id']
+            if inv.target_user_id==user['id'] and inv.sender_user_id!=user['id']:outgoing=False
+            item=invitation_dict(db,inv,outgoing)
+            item['canManage']=manages_invitation(inv,user);item['connected']=invitation_connected(db,inv)
+            item['archived']=inv.sender_archived if outgoing else inv.recipient_archived
+            (archived if item['archived'] else invitations).append(item)
+        drivers=[]
+        if user['role']=='shipper':
+            for relation in db.scalars(select(ShipperDriver).where(ShipperDriver.shipper_id==user['org_id'],ShipperDriver.active.is_(True))):
+                target=db.get(User,relation.user_id)
+                if target and target.active:drivers.append({'id':target.id,'name':target.name,'email':target.email,'role':'driver','subject':f'user:{target.id}'})
+        companies=[]
+        if user['role']=='driver':
+            org=db.get(Organization,user['org_id'])
+            if org.kind=='carrier':companies.append({'id':org.id,'name':org.name,'role':'carrier','currentEmployer':True,'subject':f'organization:{org.id}'})
+            for relation in db.scalars(select(ShipperDriver).where(ShipperDriver.user_id==user['id'],ShipperDriver.active.is_(True))):
+                shipper=db.get(Organization,relation.shipper_id)
+                companies.append({'id':shipper.id,'name':shipper.name,'role':'shipper','currentEmployer':False,'subject':f'organization:{shipper.id}'})
+        notes={n.subject:n.body for n in db.scalars(select(ParticipantComment).where(ParticipantComment.user_id==user['id']))}
+        for collection in (partners,team,drivers,companies,invitations,archived):
+            for item in collection:item['comment']=notes.get(item['subject'],'')
         org=db.get(Organization,user['org_id'])
-        return {'partners':partners,'team':team,'invitations':invitations,'organization':org.name,
+        return {'partners':partners,'team':team,'invitations':invitations,'archivedInvitations':archived,
+                'invitedDrivers':drivers,'companies':companies,'organization':org.name,
                 'standaloneDriver':user['role']=='driver' and org.kind=='driver'}
 
 @app.post('/api/participants/invitations',status_code=201)
-def invite_participant(payload:InviteIn,request:Request,user=Depends(user_session)):
+def invite_participant(payload:InviteIn,request:Request,response:Response,user=Depends(user_session)):
     protect_csrf(request,user['csrf']);email=normalize_email(payload.email)
     if payload.kind=='partner':
         if user['role'] not in ('shipper','carrier') or payload.role!=('carrier' if user['role']=='shipper' else 'shipper'): forbidden('Выберите противоположную роль партнёра')
@@ -1202,10 +1360,20 @@ def invite_participant(payload:InviteIn,request:Request,user=Depends(user_sessio
         if not user['is_admin'] or user['role'] not in ('shipper','carrier') or payload.role not in ([user['role'],'driver'] if user['role']=='carrier' else ['shipper']): forbidden('Нет прав добавлять такого сотрудника')
     elif payload.kind=='driver_join':
         if user['role']!='driver' or payload.role!='carrier': forbidden()
+    elif payload.kind=='shipper_driver':
+        if user['role']!='shipper' or payload.role!='driver':forbidden('Заказчик может пригласить водителя только в свой пул')
     if email==user['email']: invalid('Нельзя пригласить самого себя')
     consume_action('invite:'+str(user['id']),30)
     raw=secrets.token_urlsafe(40)
     with db_write() as db:
+        scope=ParticipantInvitation.sender_user_id==user['id'] if user['role']=='driver' else ParticipantInvitation.sender_org_id==user['org_id']
+        previous=db.scalar(select(ParticipantInvitation).where(scope,ParticipantInvitation.target_email==email,
+                            ParticipantInvitation.kind==payload.kind).order_by(ParticipantInvitation.id.desc()))
+        if previous:
+            previous.sender_archived=False
+            response.status_code=200
+            return {'id':previous.id,'alreadyExists':True,'status':previous.status,'emailSent':False,'link':None,
+                    'message':'Приглашение уже сохранено в вашем пуле. Повторное уведомление не отправлялось.'}
         target=db.scalar(select(User).where(User.email==email))
         if target and (not target.active or target.role!=payload.role): invalid('Для этого адреса выбрана неподходящая роль или доступ закрыт')
         if target and target.org_id==user['org_id']: invalid('Участник уже состоит в вашей компании')
@@ -1214,16 +1382,12 @@ def invite_participant(payload:InviteIn,request:Request,user=Depends(user_sessio
         if payload.kind=='driver_join':
             if db.get(Organization,user['org_id']).kind!='driver': invalid('Вы уже подключены к перевозчику')
             if target and not target.is_admin: invalid('Укажите почту руководителя перевозчика')
-        pending=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.sender_user_id==user['id'],
-            ParticipantInvitation.target_email==email,ParticipantInvitation.kind==payload.kind,ParticipantInvitation.status=='pending',
-            ParticipantInvitation.expires>datetime.now(timezone.utc)))
-        if pending: invalid('Приглашение уже есть. Используйте «Обновить ссылку»')
         inv=ParticipantInvitation(sender_user_id=user['id'],sender_org_id=user['org_id'],kind=payload.kind,
             target_email=email,target_role=payload.role,target_user_id=target.id if target else None,
             token_hash=sha_token(raw),expires=datetime.now(timezone.utc)+timedelta(days=7))
         db.add(inv);db.flush()
         if target: note_user(db,target.id,None,'participant_invitation','Приглашение к подключению','Откройте «Участники» и подтвердите или отклоните приглашение')
-        result={'id':inv.id,'link':str(request.base_url).rstrip('/')+'/#invite='+raw,'emailSent':False}
+        result={'id':inv.id,'link':str(request.base_url).rstrip('/')+'/#invite='+raw,'emailSent':False,'alreadyExists':False}
     return result
 
 @app.post('/api/participants/invitations/{invitation_id}/respond')
@@ -1237,16 +1401,17 @@ def respond_invitation(invitation_id:int,payload:InvitationDecision,request:Requ
                 forbidden('Откройте персональную ссылку приглашения')
         recipient=db.get(User,user['id'])
         if recipient.email!=inv.target_email or recipient.role!=inv.target_role: forbidden('Это приглашение другому участнику')
+        needs_relogin=payload.accepted and inv.kind=='team' and user['role']=='driver'
         if payload.accepted: accept_invitation(db,inv,recipient)
         else: inv.status='rejected';inv.target_user_id=recipient.id;inv.responded_at=datetime.now(timezone.utc)
-    return {'ok':True,'relogin':payload.accepted and user['role']=='driver'}
+    return {'ok':True,'relogin':needs_relogin}
 
 @app.post('/api/participants/invitations/{invitation_id}/cancel')
 def cancel_invitation(invitation_id:int,request:Request,user=Depends(user_session)):
     protect_csrf(request,user['csrf'])
     with db_write() as db:
         inv=db.get(ParticipantInvitation,invitation_id)
-        if not inv or inv.sender_user_id!=user['id']: raise HTTPException(404,detail='Приглашение не найдено')
+        if not inv or not manages_invitation(inv,user): raise HTTPException(404,detail='Приглашение не найдено')
         check_invitation(inv);inv.status='cancelled';inv.responded_at=datetime.now(timezone.utc)
     return {'ok':True}
 
@@ -1256,8 +1421,9 @@ def renew_invitation(invitation_id:int,request:Request,user=Depends(user_session
     raw=secrets.token_urlsafe(40)
     with db_write() as db:
         inv=db.get(ParticipantInvitation,invitation_id)
-        if not inv or inv.sender_user_id!=user['id']: raise HTTPException(404,detail='Приглашение не найдено')
-        if inv.status!='pending': invalid('Приглашение уже обработано')
+        if not inv or not manages_invitation(inv,user): raise HTTPException(404,detail='Приглашение не найдено')
+        if inv.status=='accepted' and invitation_connected(db,inv):invalid('Участник уже подключён')
+        inv.status='pending';inv.responded_at=None;inv.sender_archived=False;inv.recipient_archived=False
         inv.token_hash=sha_token(raw);inv.expires=datetime.now(timezone.utc)+timedelta(days=7)
     return {'link':str(request.base_url).rstrip('/')+'/#invite='+raw,'emailSent':False}
 
@@ -1303,6 +1469,273 @@ def deactivate_member(member_id:int,request:Request,user=Depends(user_session)):
             invalid('Сначала завершите или отмените действующие предложения и рейсы водителя')
         member.active=False;db.execute(delete(WebSession).where(WebSession.user_id==member.id))
     return {'ok':True}
+
+def manages_invitation(inv:ParticipantInvitation,user:dict)->bool:
+    if user['role']=='driver':return inv.sender_user_id==user['id']
+    return (inv.sender_org_id==user['org_id'] and user['role'] in ('shipper','carrier')
+            and (inv.kind!='team' or user['is_admin']))
+
+def invitation_connected(db:Session,inv:ParticipantInvitation)->bool:
+    sender=db.get(User,inv.sender_user_id);target=db.get(User,inv.target_user_id) if inv.target_user_id else None
+    if not sender or not target:return False
+    if inv.kind=='partner':
+        shipper=sender.org_id if sender.role=='shipper' else target.org_id
+        carrier=sender.org_id if sender.role=='carrier' else target.org_id
+        return db.scalar(select(Approval.id).where(Approval.shipper_id==shipper,Approval.carrier_id==carrier,Approval.active.is_(True))) is not None
+    if inv.kind=='shipper_driver':return db.scalar(select(ShipperDriver.id).where(ShipperDriver.shipper_id==sender.org_id,ShipperDriver.user_id==target.id,ShipperDriver.active.is_(True))) is not None
+    if inv.kind=='team':return target.active and target.org_id==inv.sender_org_id
+    if inv.kind=='driver_join':return sender.org_id==target.org_id and db.get(Organization,target.org_id).kind=='carrier'
+    return False
+
+def driver_busy(db:Session,driver_id:int)->bool:
+    return db.scalar(select(Offer.id).join(Shipment,Shipment.id==Offer.shipment_id).where(
+        Offer.driver_id==driver_id,Offer.status.in_(['waiting_driver','driver_ok','selected']),
+        Shipment.status.notin_(['completed','cancelled'])).limit(1)) is not None
+
+def disconnect_partner(db:Session,shipper_id:int,carrier_id:int,actor:User):
+    approval=db.scalar(select(Approval).where(Approval.shipper_id==shipper_id,Approval.carrier_id==carrier_id,Approval.active.is_(True)))
+    if not approval:raise HTTPException(404,detail='Партнёр уже отсутствует в пуле')
+    approval.active=False
+    bids=db.scalars(select(Offer).join(Shipment,Shipment.id==Offer.shipment_id).where(
+        Shipment.shipper_id==shipper_id,Offer.carrier_id==carrier_id,Offer.status.in_(['waiting_driver','driver_ok']))).all()
+    for bid in bids:
+        bid.status='rejected';shipment=db.get(Shipment,bid.shipment_id)
+        if shipment.status=='choice' and not db.scalar(select(Offer.id).where(Offer.shipment_id==shipment.id,Offer.id!=bid.id,Offer.status=='driver_ok')):shipment.status='search'
+        audit(db,actor,shipment,'carrier_access_revoked',f'carrier={carrier_id};offer={bid.id}')
+    for oid,role in ((shipper_id,'shipper'),(carrier_id,'carrier')):
+        note_org(db,oid,role,None,'access_revoked','Партнёр удалён из пула','Закрыт доступ к новым заявкам. Назначенные рейсы и история сохранены.')
+    return len(bids)
+
+@app.post('/api/participants/organizations/{organization_id}/remove')
+def remove_partner(organization_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    if user['role'] not in ('shipper','carrier'):forbidden()
+    with db_write() as db:
+        count=disconnect_partner(db,user['org_id'] if user['role']=='shipper' else organization_id,
+                                 user['org_id'] if user['role']=='carrier' else organization_id,db.get(User,user['id']))
+    return {'ok':True,'closedPendingOffers':count}
+
+@app.post('/api/participants/drivers/{member_id}/remove')
+def remove_invited_driver(member_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    if user['role']!='shipper':forbidden()
+    with db_write() as db:
+        link=db.scalar(select(ShipperDriver).where(ShipperDriver.shipper_id==user['org_id'],ShipperDriver.user_id==member_id,ShipperDriver.active.is_(True)))
+        if not link:raise HTTPException(404,detail='Водитель отсутствует в вашем пуле')
+        link.active=False
+        note_user(db,member_id,None,'pool_removed','Заказчик изменил пул','Вы удалены из пула приглашённых водителей. Ваш кабинет и назначенные рейсы сохранены.')
+    return {'ok':True}
+
+@app.post('/api/participants/shippers/{organization_id}/leave')
+def leave_shipper_pool(organization_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    if user['role']!='driver':forbidden()
+    with db_write() as db:
+        link=db.scalar(select(ShipperDriver).where(ShipperDriver.shipper_id==organization_id,ShipperDriver.user_id==user['id'],ShipperDriver.active.is_(True)))
+        if not link:raise HTTPException(404,detail='Заказчик отсутствует в вашем пуле')
+        link.active=False
+        note_org(db,organization_id,'shipper',None,'pool_removed','Водитель вышел из пула','Список приглашённых водителей обновлён')
+    return {'ok':True}
+
+def detach_driver(db:Session,member:User):
+    driver=db.scalar(select(Driver).where(Driver.user_id==member.id))
+    if not driver:invalid('Профиль водителя не найден')
+    if driver_busy(db,driver.id):invalid('Сначала завершите действующие предложения и рейсы водителя')
+    org=Organization(name=member.name,kind='driver');db.add(org);db.flush()
+    member.org_id=org.id;driver.org_id=org.id;member.is_admin=False
+    db.execute(delete(WebSession).where(WebSession.user_id==member.id))
+    note_user(db,member.id,None,'membership_changed','Связь с перевозчиком закрыта','Личный кабинет и история рейсов сохранены. Войдите заново.')
+
+@app.post('/api/participants/membership/leave')
+def leave_carrier(request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    if user['role']!='driver':forbidden()
+    with db_write() as db:
+        member=db.get(User,user['id'])
+        if db.get(Organization,member.org_id).kind!='carrier':invalid('Вы ещё не подключены к перевозчику')
+        old=member.org_id;detach_driver(db,member)
+        note_org(db,old,'carrier',None,'membership_changed','Водитель отключён','Водитель вышел из компании; история назначений сохранена')
+    return {'ok':True,'relogin':True}
+
+@app.post('/api/carrier/drivers/{driver_id}/unlink')
+def unlink_driver(driver_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    if user['role']!='carrier' or not user['is_admin']:forbidden()
+    with db_write() as db:
+        driver=db.get(Driver,driver_id)
+        if not driver or driver.org_id!=user['org_id']:raise HTTPException(404,detail='Водитель не найден')
+        member=db.get(User,driver.user_id)
+        if not member or member.role!='driver':invalid('Нет учётной записи водителя')
+        detach_driver(db,member)
+    return {'ok':True}
+
+@app.post('/api/participants/invitations/{invitation_id}/archive')
+def archive_invitation(invitation_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    with db_write() as db:
+        inv=db.get(ParticipantInvitation,invitation_id)
+        if not inv:raise HTTPException(404,detail='Приглашение не найдено')
+        if manages_invitation(inv,user):
+            inv.sender_archived=True
+            if inv.status=='pending':inv.status='cancelled';inv.responded_at=datetime.now(timezone.utc)
+        elif inv.target_user_id==user['id']:
+            inv.recipient_archived=True
+            if inv.status=='pending':inv.status='rejected';inv.responded_at=datetime.now(timezone.utc)
+        else:forbidden()
+    return {'ok':True,'message':'Приглашение убрано из списка. История и комментарии сохранены.'}
+
+@app.post('/api/participants/invitations/{invitation_id}/restore')
+def restore_invitation(invitation_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    with db_write() as db:
+        inv=db.get(ParticipantInvitation,invitation_id)
+        if not inv:raise HTTPException(404,detail='Приглашение не найдено')
+        if manages_invitation(inv,user):inv.sender_archived=False
+        elif inv.target_user_id==user['id']:inv.recipient_archived=False
+        else:forbidden()
+    return {'ok':True,'message':'Запись восстановлена без повторной отправки приглашения'}
+
+class CommentIn(BaseModel):
+    body:str=Field(max_length=2000)
+
+def can_comment(db:Session,subject:str,user:dict)->bool:
+    try:kind,raw=subject.split(':',1);ident=int(raw)
+    except (ValueError,TypeError):return False
+    if kind=='invitation':
+        inv=db.get(ParticipantInvitation,ident)
+        return bool(inv and (manages_invitation(inv,user) or inv.target_user_id==user['id'] or (user['role']!='driver' and inv.sender_org_id==user['org_id'])))
+    if kind=='user':
+        target=db.get(User,ident)
+        return bool(target and (target.org_id==user['org_id'] and user['role']!='driver' or user['role']=='shipper' and db.scalar(select(ShipperDriver.id).where(ShipperDriver.shipper_id==user['org_id'],ShipperDriver.user_id==ident,ShipperDriver.active.is_(True)))))
+    if kind=='organization':
+        if user['role']=='driver':
+            return (user['org_id']==ident or db.scalar(select(ShipperDriver.id).where(ShipperDriver.shipper_id==ident,ShipperDriver.user_id==user['id'],ShipperDriver.active.is_(True))) is not None)
+        return db.scalar(select(Approval.id).where(Approval.active.is_(True),
+            Approval.shipper_id==(user['org_id'] if user['role']=='shipper' else ident),
+            Approval.carrier_id==(user['org_id'] if user['role']=='carrier' else ident))) is not None
+    return False
+
+@app.post('/api/participants/comments/{subject}')
+def save_participant_comment(subject:str,payload:CommentIn,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    with db_write() as db:
+        if not can_comment(db,subject,user):raise HTTPException(404,detail='Участник не найден в вашем пуле')
+        comment=db.scalar(select(ParticipantComment).where(ParticipantComment.user_id==user['id'],ParticipantComment.subject==subject))
+        if not payload.body.strip():
+            if comment:db.delete(comment)
+        elif comment:comment.body=payload.body.strip();comment.updated_at=datetime.now(timezone.utc)
+        else:db.add(ParticipantComment(user_id=user['id'],subject=subject,body=payload.body.strip()))
+    return {'ok':True}
+
+def normalize_recovery_code(code:str)->str:
+    return re.sub(r'[\s-]','',code).upper()
+
+def mint_recovery_code(db:Session,user_id:int)->str:
+    now=datetime.now(timezone.utc)
+    for old in db.scalars(select(RecoveryCode).where(RecoveryCode.user_id==user_id,RecoveryCode.used_at.is_(None))):old.used_at=now
+    raw=secrets.token_hex(16).upper();code='LK-'+'-'.join(raw[i:i+8] for i in range(0,32,8))
+    db.add(RecoveryCode(user_id=user_id,code_hash=sha_token(normalize_recovery_code(code))))
+    return code
+
+class RecoverySetupIn(BaseModel):
+    current_password:str=Field(min_length=1,max_length=128)
+
+class PushKeysIn(BaseModel):
+    p256dh:str=Field(min_length=80,max_length=180)
+    auth:str=Field(min_length=20,max_length=100)
+
+class PushSubscriptionIn(BaseModel):
+    endpoint:str=Field(min_length=20,max_length=2048)
+    keys:PushKeysIn
+
+@app.get('/service-worker.js')
+def service_worker():
+    return FileResponse(BASE/'static'/'service-worker.js',media_type='application/javascript',
+                        headers={'Cache-Control':'no-cache','Service-Worker-Allowed':'/','X-Content-Type-Options':'nosniff'})
+
+@app.get('/updates29.js')
+def interface_updates():
+    return FileResponse(BASE/'static'/'updates29.js',media_type='application/javascript',
+                        headers={'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'})
+
+@app.post('/api/push/subscribe',status_code=201)
+def subscribe_push(payload:PushSubscriptionIn,request:Request,user=Depends(user_session)):
+    from push_delivery import public_key,valid_endpoint,valid_keys
+    protect_csrf(request,user['csrf'])
+    if not public_key():raise HTTPException(503,detail='Фоновые уведомления ещё не настроены')
+    if not valid_endpoint(payload.endpoint) or not valid_keys(payload.keys.p256dh,payload.keys.auth):invalid('Некорректная подписка браузера',422)
+    consume_action('push-subscribe:'+str(user['id']),30,15)
+    key=sha_token(payload.endpoint)
+    with db_write() as db:
+        current=db.scalar(select(PushSubscription).where(PushSubscription.endpoint_hash==key))
+        session_hash=sha_token(request.cookies.get('logistik_session',''))
+        active=0
+        for device in db.scalars(select(PushSubscription).where(PushSubscription.user_id==user['id'],PushSubscription.active.is_(True))):
+            session=db.get(WebSession,device.session_hash)
+            if not session or session.expires.replace(tzinfo=timezone.utc)<=datetime.now(timezone.utc):device.active=False
+            else:active+=1
+        if (not current or not current.active) and active>=10:invalid('Достигнут лимит 10 устройств с уведомлениями')
+        if current:
+            current.user_id=user['id'];current.p256dh=payload.keys.p256dh;current.auth=payload.keys.auth
+            current.session_hash=session_hash;current.active=True
+        else:db.add(PushSubscription(user_id=user['id'],endpoint_hash=key,endpoint=payload.endpoint,
+                                   p256dh=payload.keys.p256dh,auth=payload.keys.auth,session_hash=session_hash,active=True))
+    return {'ok':True}
+
+@app.post('/api/push/disable')
+def disable_push(request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    with db_write() as db:
+        for current in db.scalars(select(PushSubscription).where(PushSubscription.user_id==user['id'],
+                    PushSubscription.session_hash==sha_token(request.cookies.get('logistik_session','')))):
+            current.active=False
+    return {'ok':True}
+
+@app.get('/api/account')
+def account_info(user=Depends(user_session)):
+    from push_delivery import public_key
+    with SessionLocal() as db:
+        account=db.get(User,user['id']);org=db.get(Organization,user['org_id'])
+        ready=db.scalar(select(RecoveryCode.id).where(RecoveryCode.user_id==user['id'],RecoveryCode.used_at.is_(None))) is not None
+        return {'name':account.name,'email':account.email,'role':account.role,'organization':org.name,
+                'recoveryCodeReady':ready,'pushEnabled':bool(public_key()),
+                'pushDevices':db.scalar(select(func.count()).select_from(PushSubscription).where(PushSubscription.user_id==user['id'],PushSubscription.active.is_(True))) or 0}
+
+@app.post('/api/account/recovery-code')
+def setup_recovery(payload:RecoverySetupIn,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf']);consume_action('recovery-setup:'+str(user['id']),8,15)
+    with db_write() as db:
+        account=db.get(User,user['id'])
+        if not pass_ok(payload.current_password,account.password_hash):forbidden('Текущий пароль указан неверно')
+        code=mint_recovery_code(db,account.id)
+    return {'ok':True,'recoveryCode':code}
+
+class PasswordRecoveryIn(BaseModel):
+    email:str=Field(min_length=6,max_length=180)
+    recovery_code:str=Field(min_length=10,max_length=160)
+    new_password:str=Field(min_length=12,max_length=128)
+
+@app.post('/api/password/recover')
+def recover_password(payload:PasswordRecoveryIn,request:Request,response:Response):
+    same_origin(request);email=normalize_email(payload.email)
+    host=request.client.host if request.client else 'unknown'
+    consume_action('recover-ip:'+host,30,15);consume_action('recover-account:'+email,8,15)
+    if not payload.new_password.strip():invalid('Пароль не может состоять только из пробелов',422)
+    denied=False;new_code=None
+    with db_write() as db:
+        account=db.scalar(select(User).where(User.email==email,User.active.is_(True)))
+        code=db.scalar(select(RecoveryCode).where(RecoveryCode.user_id==account.id,RecoveryCode.used_at.is_(None),
+            RecoveryCode.code_hash==sha_token(normalize_recovery_code(payload.recovery_code)))) if account else None
+        if not account or not code:denied=True
+        else:
+            account.password_hash=pass_hash(payload.new_password);code.used_at=datetime.now(timezone.utc)
+            db.execute(delete(WebSession).where(WebSession.user_id==account.id))
+            db.execute(delete(LoginThrottle).where(LoginThrottle.key==sha_token('account:'+email)))
+            new_code=mint_recovery_code(db,account.id)
+            note_user(db,account.id,None,'password_recovered','Пароль восстановлен','Все прежние сеансы закрыты. Сохраните новый резервный код.')
+    if denied:raise HTTPException(400,detail='Почта или резервный код указаны неверно либо код уже использован')
+    response.delete_cookie('logistik_session',path='/')
+    return {'ok':True,'recoveryCode':new_code,'message':'Пароль изменён. Сохраните новый код и войдите заново.'}
 
 # Test data exclusively. No private contents of the customer's spreadsheet are imported.
 def seed_demo():

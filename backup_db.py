@@ -17,7 +17,8 @@ from pathlib import Path
 from sqlalchemy import func, select, text
 from app import Base, db_write, engine
 
-EXCLUDED = {'web_sessions', 'login_throttles', 'participant_invitations'}
+EXCLUDED = {'web_sessions', 'login_throttles', 'push_subscriptions', 'push_deliveries'}
+ADDITIVE_TABLES = {'participant_invitations','shipper_drivers','participant_comments','recovery_codes'}
 
 
 def tables():
@@ -63,14 +64,23 @@ def restore(path: Path, *, confirm_empty: bool):
     if not hmac.compare_digest(hashlib.sha256(payload.encode()).hexdigest(), envelope['sha256']):
         raise ValueError('Snapshot checksum mismatch')
     snapshot = json.loads(payload, object_hook=decode)
-    if snapshot.get('format') != 1 or set(snapshot.get('tables', {})) != {table.name for table in tables()}:
+    expected={table.name for table in tables()};present=set(snapshot.get('tables',{}))
+    if snapshot.get('format') != 1 or present-expected or not expected-present<=ADDITIVE_TABLES:
         raise ValueError('Incompatible snapshot format or tables')
+    for name in expected-present:snapshot['tables'][name]=[]
     for table in tables():
         columns = set(table.columns.keys())
         if table.name == 'users':
             for row in snapshot['tables']['users']:
                 if set(row) == columns - {'is_admin'}:
                     row['is_admin'] = row['role'] in ('shipper', 'carrier')
+        if table.name == 'notifications':
+            for row in snapshot['tables'][table.name]:
+                if set(row)==columns-{'event_key'}:row['event_key']=None
+        if table.name=='participant_invitations':
+            for row in snapshot['tables'][table.name]:
+                if set(row)==columns-{'sender_archived','recipient_archived'}:
+                    row.update(sender_archived=False,recipient_archived=False)
         if any(set(row) != columns for row in snapshot['tables'][table.name]):
             raise ValueError('Incompatible snapshot columns')
     with db_write() as db:
@@ -80,6 +90,11 @@ def restore(path: Path, *, confirm_empty: bool):
             raise ValueError('Destination database must be empty; nothing was changed')
         for table in tables():
             rows = snapshot['tables'][table.name]
+            if table.name=='participant_invitations':
+                # Restore the pool/history and private comments, never old access links.
+                for row in rows:
+                    if row['status']=='pending':
+                        row['status']='cancelled';row['expires']=datetime.now().astimezone()
             if table.name == 'schema_migrations':
                 # Initialization already inserted this release's migration marker.
                 existing = set(db.scalars(select(table.c.version)))
