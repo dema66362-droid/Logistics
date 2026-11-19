@@ -75,7 +75,7 @@ def run():
                 data=check(actor['client'].get('/api/state'),200,'carrier state')
                 result=post(actor,'/api/offers',{
                     'order_ref':'TEST-1001','driver_id':data['drivers'][0]['id'],
-                    'vehicle_id':data['vehicles'][0]['id'], 'day':start,'pickup':'11:00',
+                    'vehicle_id':data['vehicles'][0]['id'], 'day':start,'pickup':'10:00',
                     'end_date':end,'price':price,'accept_terms':True
                 })
                 return check(result,201,'offer submitted')['id']
