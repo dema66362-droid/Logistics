@@ -33,7 +33,7 @@ loadState=async function(options={}){
  if(soundOwner29!==state.user.id){const uid=state.user.id,generation=authGeneration;soundOwner29=uid;state.soundOn=readLocal29(soundKey29(),'1')!=='0';state.soundVolume=Number(readLocal29(soundKey29()+'.volume','1'))||1;const account=await api('/api/account');if(state.user?.id!==uid||generation!==authGeneration)return;account29=account;authChannel29?.postMessage({userId:uid});if(!state.modal)render()}
  beep();if(Notification29()&&Notification.permission==='granted'&&config.pushEnabled)bindExistingPush29().catch(()=>{});
 };
-function unlockAudio29(){try{if(!audioContext||audioContext.state==='closed')audioContext=new (window.AudioContext||window.webkitAudioContext)();const promise=audioContext.resume();if(promise)promise.catch(()=>{});return audioContext}catch{return null}}
+function unlockAudio29(){try{if(!audioContext||audioContext.state==='closed')audioContext=new (window.AudioContext||window.webkitAudioContext)();const promise=audioContext.resume();if(promise)promise.then(()=>{if(state.user)beep()}).catch(()=>{});return audioContext}catch{return null}}
 function playSound29(force=false){
  if(!force&&!state.soundOn)return false;const audio=audioContext;if(!audio||audio.state!=='running')return false;
  const uid=state.user?.id;if(!uid)return false;const highest=Math.max(0,...state.notifications.filter(n=>!n.read).map(n=>n.id));
@@ -42,7 +42,7 @@ function playSound29(force=false){
 }
 beep=function(){if(!state.user)return;const uid=state.user.id;if(navigator.locks?.request)navigator.locks.request('logistik-sound-'+uid,()=>{if(state.user?.id===uid)playSound29(false)}).catch(()=>{});else playSound29(false)};
 enableSound=async function(){const wasReady=audioContext?.state==='running'&&state.soundOn;unlockAudio29();if(audioContext)await audioContext.resume();state.soundOn=!wasReady;writeLocal29(soundKey29(),state.soundOn?'1':'0');if(state.soundOn)playSound29(true);toast(state.soundOn?'Громкий тройной сигнал включён':'Звуковые сигналы выключены');render()};
-document.addEventListener('pointerdown',e=>{if(state.user||e.target.closest('#loginForm,#signupForm'))unlockAudio29()},{capture:true});
+for(const type of ['pointerdown','click','keydown'])document.addEventListener(type,e=>{if(e.isTrusted&&(state.user||e.target.closest('#loginForm,#signupForm')))unlockAudio29()},{capture:true});
 function Notification29(){return 'Notification'in window&&'serviceWorker'in navigator&&'PushManager'in window}
 let registration29=null;
 async function worker29(){if(!('serviceWorker'in navigator))throw Error('Браузер не поддерживает фоновые уведомления');registration29=registration29||await navigator.serviceWorker.register('/service-worker.js',{scope:'/'});await navigator.serviceWorker.ready;return registration29}
