@@ -6,6 +6,7 @@ connect to Render, a user's browser profile, or a production database.
 from datetime import date, timedelta
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -18,7 +19,7 @@ import httpx
 from playwright.sync_api import sync_playwright, expect
 
 ROOT=Path(__file__).resolve().parents[1]
-ARTIFACTS=ROOT/'artifacts'/'roles-2.8'
+ARTIFACTS=ROOT/'artifacts'/'roles-2.9'
 PASSWORD='QA-'+secrets.token_urlsafe(24)
 HEADINGS={'shipper':'План отгрузок','carrier':'Кабинет перевозчика','driver':'Кабинет водителя'}
 
@@ -38,7 +39,12 @@ def register(page,base,role,email,name,company):
     expect(page.get_by_label('Электронная почта',exact=True).last).to_have_value(email)
     page.get_by_label('Пароль (от 12 символов)',exact=True).fill(PASSWORD)
     page.get_by_role('button',name='Зарегистрироваться',exact=True).click()
+    expect(page.get_by_role('dialog',name='Резервный код',exact=True)).to_be_visible()
+    recovery_code=page.locator('#recoveryCode29').input_value()
+    page.get_by_role('button',name='Я сохранил код',exact=True).click()
     expect(page.get_by_role('heading',name=HEADINGS[role],exact=True)).to_be_visible()
+    expect(page.get_by_test_id('account-badge')).to_contain_text(email)
+    return recovery_code
 
 def participants(page):
     page.get_by_role('button',name='Участники',exact=True).click()
@@ -91,9 +97,10 @@ def run_case(playwright,engine_name,viewport,case_name):
                 page.on('pageerror',lambda error:errors.append(str(error)))
                 pages[key]=page;return page
             ship=new_page('shipper');carrier=new_page('carrier');driver=new_page('driver');carrier2=new_page('carrier2')
-            register(ship,base,'shipper','shipper@example.test','Логист QA','Заказчик QA')
-            register(carrier,base,'carrier','carrier@example.test','Перевозчик QA','Перевозчик QA')
-            register(driver,base,'driver','driver@example.test','Водитель QA','')
+            recovery_codes={}
+            recovery_codes['shipper']=register(ship,base,'shipper','shipper@example.test','Логист QA','Заказчик QA')
+            recovery_codes['carrier']=register(carrier,base,'carrier','carrier@example.test','Перевозчик QA','Перевозчик QA')
+            recovery_codes['driver']=register(driver,base,'driver','driver@example.test','Водитель QA','')
             register(carrier2,base,'carrier','carrier2@example.test','Перевозчик второй','Перевозчик второй')
             # Both invitation directions go through visible forms and explicit consent.
             invitation(carrier,'partner:shipper','shipper@example.test');accept(ship)
@@ -116,11 +123,32 @@ def run_case(playwright,engine_name,viewport,case_name):
             employee.get_by_label('Ваше имя',exact=True).fill('Сотрудник QA')
             employee.get_by_label('Пароль (от 12 символов)',exact=True).fill(PASSWORD)
             employee.get_by_role('button',name='Зарегистрироваться',exact=True).click()
+            expect(employee.get_by_role('dialog',name='Резервный код',exact=True)).to_be_visible()
+            employee.get_by_role('button',name='Я сохранил код',exact=True).click()
             expect(employee.get_by_role('heading',name=HEADINGS['shipper'],exact=True)).to_be_visible()
             participants(employee)
             expect(employee.get_by_label('Кого добавить')).to_have_count(1)
             expect(employee.locator('#participantType option[value="team:shipper"]')).to_have_count(0)
             close(employee)
+            # Customer invites a driver separately from the driver's employment.
+            invitation(ship,'shipper_driver:driver','driver@example.test');accept(driver)
+            participants(ship)
+            row=ship.locator('[data-invitation-row]').filter(has_text='driver@example.test')
+            expect(row).to_have_count(1)
+            invitation_id=row.get_attribute('data-invitation-row')
+            row.locator('textarea[name="body"]').fill('Личная заметка заказчика QA')
+            row.get_by_role('button',name='Сохранить комментарий',exact=True).click()
+            expect(row.locator('[data-comment-status]')).to_have_text('Сохранено')
+            ship.get_by_label('Кого добавить',exact=True).select_option('shipper_driver:driver')
+            ship.get_by_label('Электронная почта участника',exact=True).fill('driver@example.test')
+            ship.get_by_role('button',name='Создать приглашение',exact=True).click()
+            expect(ship.locator('[data-invitation-row]').filter(has_text='driver@example.test')).to_have_count(1)
+            expect(ship.locator('[data-invitation-row="'+invitation_id+'"] textarea')).to_have_value('Личная заметка заказчика QA')
+            ship.locator('[data-invitation-row="'+invitation_id+'"] [data-archive-invite]').click()
+            expect(ship.locator('details summary')).to_contain_text('Архив приглашений')
+            ship.locator('details summary').click()
+            ship.locator('[data-invitation-row="'+invitation_id+'"] [data-restore-invite]').click()
+            close(ship)
             participants(carrier)
             carrier.get_by_role('button',name='+ Машина',exact=True).click()
             carrier.get_by_label('Обозначение машины',exact=True).fill('QA А001АА')
@@ -159,16 +187,47 @@ def run_case(playwright,engine_name,viewport,case_name):
             ship.get_by_role('button',name='Показать все поля заявки',exact=True).click()
             ship.locator('[data-complete]').first.click()
             expect(ship.locator('[data-complete]')).to_have_count(0)
+            # All three actual account sessions have an active browser audio graph.
+            for page in (ship,carrier,driver):
+                expect(page.locator('html')).to_have_attribute('data-sound-count',re.compile('[1-9][0-9]*'))
+            # Removal changes the relevant pool, preserving the driver's login.
+            participants(ship)
+            ship.on('dialog',lambda dialog:dialog.accept())
+            ship.locator('[data-driver-pool-row] [data-remove-invited-driver]').click()
+            expect(ship.locator('[data-driver-pool-row]')).to_have_count(0)
+            close(ship)
             for key in ('shipper','carrier','driver'):
                 page=pages[key]
+                expect(page.get_by_test_id('account-badge')).to_contain_text(key+'@example.test')
+                page.locator('[data-account]').click()
+                expect(page.get_by_role('dialog',name='Учётная запись',exact=True)).to_contain_text(key+'@example.test')
+                page.get_by_role('button',name='Проверить громкий сигнал',exact=True).click()
+                expect(page.locator('#soundStatus29')).to_contain_text('Сигнал запущен')
+                close(page)
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 2'), key+' horizontal overflow'
                 page.screenshot(path=str(ARTIFACTS/f'{case_name}-{key}.png'),full_page=True)
                 page.get_by_role('button',name='Выход',exact=True).click()
                 expect(page.get_by_role('heading',name='Вход в Логистик',exact=True)).to_be_visible()
+                page.get_by_role('button',name='Забыли пароль?',exact=True).click()
+                page.get_by_label('Почта учётной записи',exact=True).fill(key+'@example.test')
+                page.get_by_label('Резервный код',exact=True).fill(recovery_codes[key])
+                page.get_by_label('Новый пароль (от 12 символов)',exact=True).fill(PASSWORD+'New')
+                page.get_by_label('Повторите новый пароль',exact=True).fill(PASSWORD+'New')
+                page.get_by_role('button',name='Восстановить пароль',exact=True).click()
+                expect(page.get_by_role('dialog',name='Резервный код',exact=True)).to_be_visible()
+                page.get_by_role('button',name='Я сохранил код',exact=True).click()
+                page.get_by_label('Электронная почта',exact=True).fill(key+'@example.test')
+                page.get_by_label('Пароль',exact=True).fill(PASSWORD+'New')
+                page.get_by_role('button',name='Войти',exact=True).click()
+                expect(page.get_by_role('heading',name=HEADINGS[key],exact=True)).to_be_visible()
+                expect(page.get_by_test_id('account-badge')).to_contain_text(key+'@example.test')
             assert not errors,errors
             return {'case':case_name,'engine':engine_name,'viewport':viewport,'passed':True,
                     'checks':['registration 3 roles','shipper adds carrier','carrier adds shipper','driver joins carrier',
-                              'employee registers by link','vehicle creation','order-driver-selection-completion','driver price privacy','logout','no JS errors','no horizontal overflow']}
+                              'employee registers by link','vehicle creation','order-driver-selection-completion','driver price privacy',
+                              'customer invites driver','persistent single invitation','archive/restore invitations','private participant comments',
+                              'remove driver from pool','account identity each role','audio graph and loud test tone','password recovery 3 roles',
+                              'logout','no JS errors','no horizontal overflow']}
         except Exception:
             for key,page in pages.items():
                 try: page.screenshot(path=str(ARTIFACTS/f'FAILED-{case_name}-{key}.png'),full_page=True)

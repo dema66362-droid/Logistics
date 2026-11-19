@@ -134,12 +134,13 @@ def run():
             assert response.status_code == (401 if index < 8 else 429)
         # New role registration/reciprocal consent uses the same PostgreSQL DB
         # through two independent server processes, including concurrent writes.
-        new_actors={}
+        new_actors={};recovery_codes={}
         for index,role in enumerate(('shipper','carrier','driver')):
             c=httpx.Client(base_url=bases[index%2],timeout=20,trust_env=False);clients.append(c)
             payload={'role':role,'email':'new-'+role+'@example.test','name':'Новый '+role,
                      'organization':'Новая '+role,'password':'Isolated-PG-Registration-2026!'}
-            check(c.post('/api/signup',json=payload),201,'register '+role)
+            registered=check(c.post('/api/signup',json=payload),201,'register '+role)
+            recovery_codes[role]=registered['recoveryCode']
             st=check(c.get('/api/state'),200,'new '+role+' session')
             assert st['user']['role']==role
             new_actors[role]=(c,st['csrf'],st)
@@ -163,6 +164,23 @@ def run():
         assert new_driver[0].get('/api/state').status_code==401
         check(new_driver[0].post('/api/login',json={'email':'new-driver@example.test','password':'Isolated-PG-Registration-2026!'}),200,'driver after membership change')
         assert new_driver[0].get('/api/state').json()['user']['org_id']==new_carrier[2]['user']['org_id']
+        # The same invitation is inserted once even across workers/devices.
+        invitation_payload={'kind':'shipper_driver','role':'driver','email':'future-driver@example.test'}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            repeated=list(pool.map(lambda who:post(who,'/api/participants/invitations',invitation_payload),(new_ship,second)))
+        assert sorted(r.status_code for r in repeated)==[200,201]
+        assert repeated[0].json()['id']==repeated[1].json()['id']
+        subject='invitation:'+str(repeated[0].json()['id'])
+        check(post(new_ship,'/api/participants/comments/'+subject,{'body':'Личная заметка на PostgreSQL'}),200,'save comment')
+        assert any(i['comment']=='Личная заметка на PostgreSQL' for i in second[0].get('/api/participants').json()['invitations'])
+        # Only one concurrent password reset may consume the one-time code.
+        recovery_payload={'email':'new-driver@example.test','recovery_code':recovery_codes['driver'],
+                          'new_password':'Isolated-PG-Recovered-Password-2026!'}
+        guests=[httpx.Client(base_url=base,timeout=20,trust_env=False) for base in bases];clients.extend(guests)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            recovered=list(pool.map(lambda client:client.post('/api/password/recover',json=recovery_payload),guests))
+        assert sorted(r.status_code for r in recovered)==[200,400]
+        assert new_driver[0].get('/api/state').status_code==401
         with tempfile.TemporaryDirectory(prefix='logistik_pg_restore_') as directory:
             snapshot = str(Path(directory) / 'snapshot.json')
             execute(['backup_db.py', 'backup', snapshot])
@@ -170,11 +188,13 @@ def run():
             execute(['backup_db.py', 'restore', snapshot, '--confirm-empty-database'], recovery_env)
             execute(['-c', "from app import *; from sqlalchemy import select,func; "
                      "db=SessionLocal(); assert db.scalar(select(func.count()).select_from(Shipment))==3; "
-                     "assert db.scalar(select(func.count()).select_from(ParticipantInvitation))==0; "
+                     "assert db.scalar(select(func.count()).select_from(ParticipantInvitation))==4; "
+                     "assert db.scalar(select(func.count()).select_from(ParticipantComment))==1; "
+                     "assert db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.target_email=='future-driver@example.test')).status=='cancelled'; "
                      "assert db.scalar(select(func.count()).select_from(WebSession))==0; db.close(); "
                      "db=SessionLocal(); x=Organization(name='Проверка последовательности',kind='shipper'); "
                      "db.add(x); db.commit(); assert x.id>3; db.close()"], recovery_env)
-        print('PASS: PostgreSQL, 2 server processes, single assignment, exclusive driver hold, durable login throttle, registration 3 roles, reciprocal invitations, concurrent consent, driver membership, backup recovery and sequences')
+        print('PASS: PostgreSQL, 2 server processes, single assignment, exclusive driver hold, durable login throttle, registration 3 roles, reciprocal invitations, concurrent consent, driver membership, single invitation across workers, private comments, single-use concurrent password recovery, pool backup recovery and sequences')
     finally:
         for client in clients: client.close()
         for process in processes:
