@@ -43,6 +43,7 @@ loadState=async function(options={}){
  beep();if(Notification29()&&Notification.permission==='granted'&&config.pushEnabled)bindExistingPush29().catch(()=>{});
 };
 function unlockAudio29(){try{if(!audioContext||audioContext.state==='closed')audioContext=new (window.AudioContext||window.webkitAudioContext)();const promise=audioContext.resume();if(promise)promise.then(()=>{if(state.user)beep()}).catch(error=>{document.documentElement.dataset.audioError=error.name});return audioContext}catch(error){document.documentElement.dataset.audioError=error.name;return null}}
+async function resumeAudio29(){const audio=unlockAudio29();if(!audio)return false;await Promise.race([audio.resume().catch(()=>{}),new Promise(resolve=>setTimeout(resolve,1200))]);return audio.state==='running'}
 function playSound29(force=false){
  if(!force&&!state.soundOn)return false;const audio=audioContext;if(!audio||audio.state!=='running')return false;
  const uid=state.user?.id;if(!uid)return false;const highest=Math.max(0,...state.notifications.filter(n=>!n.read).map(n=>n.id));
@@ -50,7 +51,7 @@ function playSound29(force=false){
  try{const start=audio.currentTime;for(const [i,offset]of [0,.32,.64].entries()){const oscillator=audio.createOscillator(),gain=audio.createGain();oscillator.type='sine';oscillator.frequency.value=i%2?1046:880;gain.gain.setValueAtTime(.0001,start+offset);gain.gain.exponentialRampToValueAtTime(Math.max(.01,Math.min(1,state.soundVolume||1))*.75,start+offset+.02);gain.gain.exponentialRampToValueAtTime(.0001,start+offset+.25);oscillator.connect(gain);gain.connect(audio.destination);oscillator.start(start+offset);oscillator.stop(start+offset+.26)}if(!force)writeLocal29(heardKey29(),highest);document.documentElement.dataset.lastSoundAt=String(Date.now());document.documentElement.dataset.soundCount=String(Number(document.documentElement.dataset.soundCount||0)+1);document.querySelector('[data-sound]')?.setAttribute('data-sound-ready','true');return true}catch{return false}
 }
 beep=function(){if(!state.user)return;const uid=state.user.id;if(navigator.locks?.request)navigator.locks.request('logistik-sound-'+uid,()=>{if(state.user?.id===uid)playSound29(false)}).catch(()=>{});else playSound29(false)};
-enableSound=async function(){const wasReady=audioContext?.state==='running'&&state.soundOn;unlockAudio29();if(audioContext)await audioContext.resume();state.soundOn=!wasReady;writeLocal29(soundKey29(),state.soundOn?'1':'0');if(state.soundOn)playSound29(true);toast(state.soundOn?'Громкий тройной сигнал включён':'Звуковые сигналы выключены');render()};
+enableSound=async function(){const wasReady=audioContext?.state==='running'&&state.soundOn,ready=await resumeAudio29();state.soundOn=!wasReady;writeLocal29(soundKey29(),state.soundOn?'1':'0');if(state.soundOn)playSound29(true);toast(state.soundOn?(ready?'Громкий тройной сигнал включён':'Разрешите звук для сайта в настройках браузера и проверьте устройство вывода'):'Звуковые сигналы выключены');render()};
 for(const type of ['pointerdown','click','keydown'])document.addEventListener(type,e=>{if(e.isTrusted&&(state.user||e.target.closest('#loginForm,#signupForm')))unlockAudio29()},{capture:true});
 function Notification29(){return 'Notification'in window&&'serviceWorker'in navigator&&'PushManager'in window}
 let registration29=null;
@@ -74,7 +75,7 @@ document.addEventListener('click',async e=>{
   if(handled==='recover'){state.modal='recover';document.getElementById('overlay').innerHTML=recoverModal29()}
   if(handled==='ackRecovery'){code29='';codeEmail29='';closeModal()}
   if(handled==='copyRecovery'){const input=document.getElementById('recoveryCode29');try{await navigator.clipboard.writeText(input.value);toast('Код скопирован')}catch{input.focus();input.select();toast('Скопируйте выделенный код')}}
-  if(handled==='testSound'){unlockAudio29();if(audioContext)await audioContext.resume();const ok=playSound29(true);document.getElementById('soundStatus29').textContent=ok?'Сигнал запущен. Проверьте, что его слышно на устройстве.':'Браузер не разрешил воспроизведение звука'}
+  if(handled==='testSound'){await resumeAudio29();const ok=playSound29(true),target=document.getElementById('soundStatus29');if(target)target.textContent=ok?'Сигнал запущен. Проверьте, что его слышно на устройстве.':'Разрешите звук для сайта в настройках браузера и проверьте устройство вывода'}
   if(handled==='enablePush')await enablePush29();
   if(handled==='disablePush'){await api('/api/push/disable','POST');const sub=await (await worker29()).pushManager.getSubscription();if(sub)await sub.unsubscribe();pushBound29='';account29=await api('/api/account');render();toast('Фоновые уведомления на этом устройстве выключены')}
   if(handled==='archiveInvite'||handled==='restoreInvite'){await api('/api/participants/invitations/'+Number(button.dataset[handled])+'/'+(handled==='archiveInvite'?'archive':'restore'),'POST');await openParticipants()}
