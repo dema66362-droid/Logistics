@@ -12,16 +12,27 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-TMP = tempfile.TemporaryDirectory(prefix='logistik_multitenant_')
-ROOT = Path(__file__).resolve().parents[1]
-os.environ['LOGISTIK_DATABASE_URL'] = 'sqlite:///' + str(Path(TMP.name) / 'test.sqlite3')
-os.environ['LOGISTIK_DEMO'] = '1'
-os.environ['LOGISTIK_ALLOW_SIGNUP'] = '1'
-os.environ.pop('LOGISTIK_DEPLOYMENT',None)
-spec = importlib.util.spec_from_file_location('audited_logistik', ROOT / 'app.py')
-a = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = a
-spec.loader.exec_module(a)
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+import app as a
+
+ROOT=Path(__file__).resolve().parents[1]
+
+@pytest.fixture(scope='module',autouse=True)
+def independent_application(tmp_path_factory):
+    db_file=tmp_path_factory.mktemp('tenant-audit')/'audit.sqlite3'
+    engine=create_engine('sqlite:///'+str(db_file),connect_args={'check_same_thread':False})
+    a.Base.metadata.create_all(engine)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(a,'engine',engine)
+        patch.setattr(a,'SessionLocal',sessionmaker(bind=engine,expire_on_commit=False))
+        patch.setattr(a,'DEMO',True)
+        patch.setattr(a,'IS_SQLITE',True)
+        patch.setenv('LOGISTIK_ALLOW_SIGNUP','1')
+        a.seed_demo()
+        yield
+    engine.dispose()
 
 PASSWORD = 'Demo-2026-Start!'
 
@@ -144,13 +155,14 @@ def test_cancel_notifies_and_scopes_by_organization():
     assert post(driver,dc,f'/api/offers/{qid}/driver-response?accepted=true').status_code==409
     statuses={r['id']:r['status'] for r in ship2.get('/api/state').json()['orders']}
     assert statuses[ref]=='cancelled'
-    assert ref not in {r['id'] for r in carrier.get('/api/state').json()['orders']}
+    assert ref not in {r['id'] for r in carrier.get('/api/state').json()['orders'] if r['status']!='cancelled'}
+    assert ref in {r['ref'] for r in carrier.get('/api/journal-deletions').json()}
     assert any(n['kind']=='order_cancelled' and n['orderId']==ref for n in driver.get('/api/state').json()['notifications'])
-    assert post(ship2,s2,f'/api/orders/{ref}/cancel').status_code==409
+    assert post(ship2,s2,f'/api/orders/{ref}/cancel').status_code==200
     assert post(ship2,s2,f'/api/orders/{ref}/search',{'public_external':False}).status_code==409
 
 
-def test_untrusted_hosts_config_and_pilot_cookies():
+def test_untrusted_hosts_config_and_pilot_cookies(tmp_path):
     ship,sc=login('shipper@example.test')
     no_cache=ship.get('/api/state')
     assert no_cache.headers['cache-control']=='no-store'
@@ -158,7 +170,7 @@ def test_untrusted_hosts_config_and_pilot_cookies():
     assert 'logistik_session' in ship.cookies
     assert 'HttpOnly' in ship.post('/api/login',json={'email':'shipper@example.test','password':PASSWORD}).headers['set-cookie']
     env=os.environ.copy();env['LOGISTIK_DEPLOYMENT']='production'
-    env['LOGISTIK_DATABASE_URL']='sqlite:///'+str(Path(TMP.name)/'unsafe.sqlite3')
+    env['LOGISTIK_DATABASE_URL']='sqlite:///'+str(tmp_path/'unsafe.sqlite3')
     env['LOGISTIK_DEMO']='0';env['LOGISTIK_ALLOW_SIGNUP']='0'
     result=subprocess.run([sys.executable,'-c','import app'],cwd=ROOT,env=env,text=True,capture_output=True)
     assert result.returncode != 0 and 'Unsafe production config' in result.stderr

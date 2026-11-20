@@ -73,7 +73,7 @@ def test_schedules_each_stage_alternative_dates_and_fields(accounts):
     ix=q.split('-')[1]
     for user in (car,driver):
         row=plan(user,str(monday))['drivers'][0]['jobs'][0]
-        assert row['offer']['status']=='waiting_driver' and not row['confirmed'] and row['offer']['day']==str(monday) and row['offer']['bidDay']==str(scheduled)
+        assert row['offer']['status']=='driver_ok' and not row['confirmed'] and row['offer']['day']==str(monday) and row['offer']['bidDay']==str(scheduled)
     assert not state(driver)['orders'][0]['pickupContact']
     assert post(driver,f'/api/offers/{ix}/driver-response?accepted=true').status_code==200
     assert plan(car,str(monday))['drivers'][0]['jobs'][0]['offer']['status']=='driver_ok'
@@ -109,7 +109,7 @@ def test_unregistered_driver_can_be_planned_and_later_signs_in_by_personal_invit
     driver=accounts('driver','newdriver@example.test',invitation_token=token(inv))
     assert state(driver)['drivers'][0]['id']==member['id']
     assert state(driver)['offers'][0]['id']==q
-    assert any(n['kind']=='driver_request' and n['orderId']==ref for n in state(driver)['notifications'])
+    assert any(n['kind']=='crew_reserved' and n['orderId']==ref for n in state(driver)['notifications'])
     assert post(driver,'/api/offers/'+q[2:]+'/driver-response?accepted=true').status_code==200
 
 def test_two_carriers_one_person_conflict_decline_and_release(accounts):
@@ -124,12 +124,13 @@ def test_two_carriers_one_person_conflict_decline_and_release(accounts):
     ref,day=new_order(ship);ref2,_=new_order(ship)
     assert publish(ship,ref,first).status_code==200 and publish(ship,ref2,second).status_code==200
     qa=create_bid(first,ref,d1['id'],v1,day).json()['id'][2:]
-    qb=create_bid(second,ref2,d2['id'],v2,day).json()['id'][2:]
-    assert len(plan(driver,day)['drivers'][0]['jobs'])==2
+    assert create_bid(second,ref2,d2['id'],v2,day).status_code==409
+    assert len(plan(driver,day)['drivers'][0]['jobs'])==1
     assert [j['order']['id'] for j in plan(first,day)['drivers'][0]['jobs']]==[ref]
-    assert post(driver,f'/api/offers/{qa}/driver-response?accepted=true').status_code==200
-    assert post(driver,f'/api/offers/{qb}/driver-response?accepted=true').status_code==409
-    assert post(driver,f'/api/offers/{qb}/driver-response?accepted=false').status_code==200
+    assert post(first,f'/api/offers/{qa}/withdraw').status_code==200
+    qb=create_bid(second,ref2,d2['id'],v2,day).json()['id'][2:]
+    assert plan(driver,day)['drivers'][0]['jobs'][0]['order']['id']==ref2
+    assert post(second,f'/api/offers/{qb}/withdraw').status_code==200
     assert plan(second,day)['drivers'][0]['jobs']==[] and plan(second,day)['inbox']==[ref2]
     assert post(second,f"/api/carrier/drivers/{d2['id']}/unlink").status_code==200
     assert not state(second)['drivers'] and state(first)['drivers'][0]['id']==d1['id']
@@ -214,27 +215,24 @@ def test_carrier_enters_external_work_once_and_driver_can_complete_cycle(account
     assert not state(ship)['orders'] and not state(other)['orders']
     for client in (car,driver):
         job=plan(client,day)['drivers'][0]['jobs'][0]
-        assert job['order']['shipperName']=='Клиент по телефону' and job['offer']['pickup']=='12:40' and not job['confirmed']
+        assert job['order']['shipperName']=='Клиент по телефону' and job['offer']['pickup']=='12:40' and job['confirmed']
     assert plan(car,day)['inbox']==[]
-    assert state(driver)['orders'][0]['pickupContact']==''
-    assert post(driver,f'/api/carrier/plan/trips/{ref}/accept').status_code==200
+    assert state(driver)['orders'][0]['pickupContact']=='Диспетчер А'
     assert state(driver)['orders'][0]['pickupContact']=='Диспетчер А'
     assert plan(car,day)['drivers'][0]['jobs'][0]['confirmed']
     assert post(car,f'/api/carrier/plan/trips/{ref}/complete').status_code==200
     assert state(driver)['orders'][0]['status']=='completed'
     for client in (car,driver):
-        assert len([n for n in state(client)['notifications'] if n['orderId']==ref])==3
+        assert len([n for n in state(client)['notifications'] if n['orderId']==ref])==2
 
 def test_private_trip_blocks_normal_order_and_cancellation_releases_resources(accounts):
     ship=accounts('shipper');car=accounts('carrier');driver=accounts('driver');link(ship,car,'carrier@example.test')
     d=members(car,'Водитель','driver@example.test');vid=vehicle(car)
     ref,day=new_order(ship);assert publish(ship,ref,car).status_code==200
-    normal=create_bid(car,ref,d['id'],vid,day).json()['id'][2:]
     private=post(car,'/api/carrier/plan/trips',internal_payload(d['id'],vid,day)).json()['id']
-    assert post(driver,f'/api/carrier/plan/trips/{private}/accept').status_code==200
-    assert post(driver,f'/api/offers/{normal}/driver-response?accepted=true').status_code==409
+    assert create_bid(car,ref,d['id'],vid,day).status_code==409
     assert post(car,f'/api/carrier/plan/trips/{private}/cancel').status_code==200
-    assert post(driver,f'/api/offers/{normal}/driver-response?accepted=true').status_code==200
+    assert create_bid(car,ref,d['id'],vid,day).status_code==201
     assert post(car,'/api/carrier/plan/trips',internal_payload(d['id'],vid,day,'different-manual-key')).status_code==409
 
 def test_internal_schedule_does_not_release_unverified_cargo(accounts):

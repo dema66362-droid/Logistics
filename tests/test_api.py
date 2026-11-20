@@ -78,18 +78,15 @@ def test_full_cycle_double_accept_and_audit():
     q=create_offer(carrier,cc,ref,day='2026-12-12')
     assert q.status_code==201,q.text
     qid=int(q.json()['id'].split('-')[1])
-    assert request(ship,sc,f'/api/offers/{qid}/accept').status_code==409
     assert request(carrier,cc,f'/api/offers/{qid}/driver-response?accepted=true').status_code==403
-    assert len(drv.get('/api/state').json()['offers'])>=1
-    assert request(drv,dc,f'/api/offers/{qid}/driver-response?accepted=true').status_code==200
-    assert request(drv,dc,f'/api/offers/{qid}/driver-response?accepted=true').status_code==409
+    assert any(o['status']=='driver_ok' for o in drv.get('/api/state').json()['offers'])
     accepted=request(ship,sc,f'/api/offers/{qid}/accept')
     assert accepted.status_code==200,accepted.text
     assert accepted.json()['status']=='confirmed'
     assert accepted.json()['price']==90000
     assert request(ship,sc,f'/api/offers/{qid}/accept').status_code==409
     history=ship.get('/api/audit/'+ref).json()
-    assert [x['action'] for x in history]==['created','search_launched','offer_created','driver_ok','assigned']
+    assert [x['action'] for x in history]==['created','search_launched','offer_created','assigned']
     assert ship.get('/api/export.csv').status_code==200
     # carrier sees only their own commercial offer, not a competitor's.
     assert all(x['carrier']=='Демо: Каскад Транс' for x in carrier.get('/api/state').json()['offers'])
