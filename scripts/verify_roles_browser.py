@@ -3,7 +3,9 @@
 Uses disposable synthetic accounts in a new local DB per browser case. Does not
 connect to Render, a user's browser profile, or a production database.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+import hashlib
+from verify_role_controls import admin_flow, journal_controls, more, share_and_plan
 import json
 import os
 import re
@@ -26,7 +28,7 @@ HEADINGS={'shipper':'План отгрузок','carrier':'Кабинет пер
 def field(page,form,name,value):
     page.locator(f'#{form} [name="{name}"]').fill(value)
 
-def register(page,base,role,email,name,company):
+def register(page,base,role,email,name,company,inn='0000000018'):
     page.bring_to_front()
     page.goto(base,wait_until='domcontentloaded')
     page.get_by_role('button',name='Регистрация пользователя',exact=True).click()
@@ -34,7 +36,7 @@ def register(page,base,role,email,name,company):
     if role!='driver':
         expect(page.get_by_label('Название организации',exact=True)).to_be_visible()
         page.get_by_label('Название организации',exact=True).fill(company)
-        page.get_by_label('ИНН',exact=True).fill('0000000018')
+        page.get_by_label('ИНН',exact=True).fill(inn)
     else: expect(page.get_by_label('Название организации',exact=True)).to_be_hidden()
     page.get_by_label('Ваше имя',exact=True).fill(name)
     page.get_by_label('Электронная почта',exact=True).last.fill('mailto:'+email)
@@ -120,7 +122,14 @@ def check_public_collection(ship, carrier, driver, day):
     expect(carrier.locator('#bidForm')).to_have_count(0)
     driver.bring_to_front()
     driver.get_by_role('button', name='Обновить', exact=True).click()
-    expect(driver.locator('.d31request').filter(has_text='Склад самовывоза').locator('[data-driver-ok]')).to_have_count(0)
+    next_trip=driver.get_by_role('button',name='Ближайший рейс',exact=True)
+    next_trip.click()
+    assigned=driver.locator('.d31job').filter(has_text='Склад самовывоза')
+    expect(assigned).to_be_visible()
+    assigned.locator('[data-dispatch=detail]').click()
+    expect(driver.get_by_role('dialog')).to_contain_text('Склад самовывоза')
+    expect(driver.get_by_role('dialog').locator('[data-driver-ok]')).to_have_count(0)
+    driver.keyboard.press('Escape')
     ship.bring_to_front()
     ship.get_by_role('button', name='Обновить', exact=True).click()
     ship.locator('.d31queue').filter(has_text='Склад самовывоза').get_by_role('button', name='Предложения').click()
@@ -148,6 +157,10 @@ def run_case(playwright,engine_name,viewport,case_name):
         env={k:v for k,v in os.environ.items() if not k.startswith('LOGISTIK_')}
         env.update(LOGISTIK_DATABASE_URL='sqlite:///'+str(Path(tmp)/'roles.sqlite3'),LOGISTIK_DEMO='0',
                    LOGISTIK_ALLOW_SIGNUP='1',LOGISTIK_DEPLOYMENT='pilot',LOGISTIK_SECURE_COOKIE='0')
+        initial=secrets.token_urlsafe(32)
+        env.update(LOGISTIK_SITE_ADMIN_PASSWORD=secrets.token_urlsafe(32),
+                   LOGISTIK_SITE_ADMIN_SETUP_HASH=hashlib.sha256(initial.encode()).hexdigest(),
+                   LOGISTIK_SITE_ADMIN_SETUP_UNTIL=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat())
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         base=f'http://127.0.0.1:{port}'
@@ -234,11 +247,13 @@ def run_case(playwright,engine_name,viewport,case_name):
             ship.locator('#newForm [name="vehicleType"]').select_option(label='Фура')
             ship.get_by_role('button',name='Создать заявку',exact=True).click()
             expect(ship.locator('#newForm')).to_have_count(0)
+            journal_controls(ship,ARTIFACTS,case_name)
             ship.get_by_role('button',name='Отправить заявку',exact=True).click()
             send=ship.get_by_role('dialog',name='Отправить заявку перевозчику')
             send.get_by_label('Перевозчик QA',exact=True).check()
             send.get_by_role('button',name='Отправить заявку',exact=True).click()
             expect(send).to_have_count(0)
+            ship.get_by_role('button',name='Отгрузки',exact=True).click()
             carrier.bring_to_front()
             carrier.get_by_role('button',name='Обновить',exact=True).click()
             carrier.locator('[data-bid]').first.click()
@@ -315,6 +330,37 @@ def run_case(playwright,engine_name,viewport,case_name):
             external_shipper = new_page('external-shipper')
             register(external_shipper, base, 'shipper', 'external.ship@example.test', 'Новый логист', 'Новый заказчик')
             check_public_collection(external_shipper, carrier, driver, (trip_day+timedelta(days=8)).isoformat())
+            # The external job is assigned. Cancel it as its driver and inspect all three journals.
+            driver.get_by_role('button',name='Обновить',exact=True).click()
+            driver.get_by_role('button',name='Ближайший рейс').click()
+            driver.locator('.d31job').filter(has_text='Склад самовывоза').locator('[data-dispatch=detail]').click()
+            driver.once('dialog',lambda dialog:dialog.accept())
+            driver.get_by_role('button',name='Отмена заявки',exact=True).click()
+            expect(driver.get_by_role('dialog')).to_have_count(0)
+            for participant in [external_shipper,carrier,driver]:
+                more(participant,'Отменённые')
+                expect(participant.get_by_role('dialog')).to_contain_text('Склад самовывоза')
+                participant.keyboard.press('Escape')
+                participant.get_by_role('button',name='Уведомления',exact=True).click()
+                expect(participant.get_by_role('dialog')).to_contain_text(re.compile('отмен',re.I))
+                participant.get_by_role('button',name='Прочитать все',exact=True).click()
+                expect(participant.get_by_role('dialog').locator('[data-read-note]')).to_have_count(0)
+                participant.keyboard.press('Escape')
+            driver.get_by_role('button',name='Предыдущий месяц').click()
+            driver.get_by_role('button',name='Следующий месяц').click()
+            driver.get_by_role('button',name='Сегодня').click()
+            today=driver.request.get(base+'/api/state').json()['day']
+            expect(driver.locator('[data-month-grid]')).to_have_attribute('data-month-grid',today[:7])
+            if today[:7]<leave[:7]:
+                driver.get_by_role('button',name='Следующий месяц').click()
+                expect(driver.locator('[data-dispatch=driverDay][data-id="'+leave+'"]')).to_be_visible()
+            driver.locator('[data-dispatch=driverDay][data-id="'+leave+'"]').click()
+            driver.once('dialog',lambda dialog:dialog.accept())
+            driver.get_by_role('button',name='Убрать отпуск',exact=True).click()
+            expect(driver.locator('[data-dispatch=driverDay][data-id="'+leave+'"]')).not_to_contain_text('Отпуск')
+            share_and_plan(ship,carrier,driver,day,ARTIFACTS,case_name)
+            register(new_page('moderation-company'),base,'shipper','moderation@example.test','Диспетчер','Тест модерации','0000000025')
+            admin_flow(new_page('site-admin'),base,initial,secrets.token_urlsafe(28),ARTIFACTS,case_name)
             # Removal changes the relevant pool, preserving the driver's login.
             participants(ship)
             ship.on('dialog',lambda dialog:dialog.accept())
@@ -333,7 +379,7 @@ def run_case(playwright,engine_name,viewport,case_name):
                 close(page)
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 2'), key+' horizontal overflow'
                 page.screenshot(path=str(ARTIFACTS/f'{case_name}-{key}.png'),full_page=True)
-                page.get_by_role('button',name='Выход',exact=True).click()
+                more(page,'Выход')
                 expect(page.get_by_role('heading',name='Вход в Логистик',exact=True)).to_be_visible()
                 page.get_by_role('button',name='Забыли пароль?',exact=True).click()
                 page.get_by_label('Почта учётной записи',exact=True).fill(key+'@example.test')
@@ -351,7 +397,7 @@ def run_case(playwright,engine_name,viewport,case_name):
             assert not errors,errors
             return {'case':case_name,'engine':engine_name,'viewport':viewport,'passed':True,
                     'checks':['registration 3 roles with INN','driver monthly calendar and leave','driver counteroffer and shipper queue decision','shipper adds carrier','carrier adds shipper','carrier directly adds driver',
-                              'employee personal login','vehicle creation','order-driver-selection-completion','driver edits shared price; original retained',
+                              'employee personal login','8-column journal, search, CSV, keyboard and full-table dispatch','cancellation and receipts across three workspaces','remove leave and month navigation','operator initial password, history, block, unblock, delete and logout','partner fleet grant and revoke','costs, road distance and position','manual multi-role fleet planning and completion','vehicle creation','order-driver-selection-completion','driver edits shared price; original retained',
                               'customer invites driver','persistent single invitation','private participant comments',
                               'remove driver from pool','account identity each role','audio graph and loud test tone','password recovery 3 roles',
                               'self-collection without delivery details','bilateral external partnership and assignment','completed order summary matches actual status','logout','no JS errors','no horizontal overflow']}
