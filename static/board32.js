@@ -39,6 +39,7 @@ function directory32(data){
         let buttons='';
         if(x.status==='pending'&&!x.outgoing)buttons+=action32('Принять','accept',x.id,true)+action32('Отклонить','reject',x.id);
         if(x.status==='pending'&&x.outgoing&&x.canManage)buttons+=action32('Отозвать','withdrawInvite',x.id);
+        if(x.outgoing&&x.canManage&&x.status!=='pending'&&!x.connected)buttons+=action32('Возобновить приглашение','renew',x.id);
         if(x.outgoing&&x.canManage&&x.status==='pending'&&x.kind==='shipper_driver')buttons+=action32('Получить ссылку','inviteLink',x.id);
         return `<div class="partner32"><b>${esc(x.name)}</b><small>${x.outgoing?'Исходящее':'Входящее'} · ${esc(label32[x.status]||x.status)}</small>${controls32(buttons)}</div>`;
     }
@@ -164,6 +165,7 @@ document.addEventListener('click',async e=>{
         if(action==='inviteLink'){const r=await api('/api/participants/invitations/'+Number(id)+'/renew','POST');if(state.user?.id===uid)link32(r.link);return}
         if(action==='sendCompany'){const r=await api('/api/partners/invite','POST',{company_id:Number(id)});if(state.user?.id===uid)toast(r.message||'Приглашение отправлено');}
         else if(action==='accept'||action==='reject'){await api('/api/participants/invitations/'+Number(id)+'/respond','POST',{accepted:action==='accept'});}
+        else if(action==='renew')await api('/api/participants/invitations/'+Number(id)+'/renew','POST');
         else if(action==='withdrawInvite')await api('/api/participants/invitations/'+Number(id)+'/cancel','POST');
         else if(action==='share'||action==='remove'){
             const p=board32.data.partners[Number(id)];
