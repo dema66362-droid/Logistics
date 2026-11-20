@@ -181,7 +181,8 @@ function details31(ref){
     const offers=my.filter(q=>['waiting_driver','driver_ok','selected'].includes(q.status)).map(q=>{
         let buttons='';
         if(q.status==='driver_ok'&&role==='shipper'){
-            if(q.day===o.date&&q.pickup===o.time&&!o.slotProposals?.some(p=>p.offerId===Number(q.id.slice(2))||p.carrierId===q.carrierId))buttons+=`<button class="btn small primary" data-select-quote="${esc(q.id)}">Назначить перевозчика</button>`;
+            if(!q.approved)buttons+=`<button class="btn small" data-approve-carrier="${esc(q.carrierId)}" title="Допустить перевозчика после проверки">Добавить в пул</button>`;
+            else if(q.day===o.date&&q.pickup===o.time&&!o.slotProposals?.some(p=>p.offerId===Number(q.id.slice(2))||p.carrierId===q.carrierId))buttons+=`<button class="btn small primary" data-select-quote="${esc(q.id)}">Назначить перевозчика</button>`;
             buttons+=`<button class="btn small" data-reject-quote="${esc(q.id)}">Отклонить предложение</button>`;
         }
         if(role==='carrier'&&q.status!=='selected')buttons+=`<button class="btn small" data-withdraw-quote="${esc(q.id)}">Отозвать предложение</button>`;

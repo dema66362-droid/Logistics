@@ -93,11 +93,11 @@ function driver(){
 function detailsModal(id){let o=getOrder(id);if(!o)return '';let props=[['Статус',statuses[o.status]?.[0]],['Менеджер',o.manager],['Дата и время погрузки',`${localeDay(o.date)}, ${o.time}`],['Плановая выгрузка',localeDay(o.unload)],['Грузополучатель',o.recipient],['Адрес погрузки',o.pickupAddress||'—'],['Адрес доставки',o.deliveryAddress||'—'],['Контакт грузополучателя',o.recipientContact||'—'],['Требования',o.terms||'—'],['Продукт',o.product],['Объём',`${fmt(o.tons)} т`],['Тип транспорта',o.vehicleType],['Способ поставки',o.mode],['Перевозчик',o.carrier||'Не назначен'],['Водитель',o.driver||'Не назначен'],['Госномера ТС',o.car||'Не указаны'],['№ заявки в ЭПД',o.epd||'Не указан'],['№ ЭТрН',o.etrn||'Не указан'],['Цена',o.price?rub(o.price):'Не согласована'],['Комментарий',o.note||'—']];return `<div class="modal-backdrop" data-closebg><div class="modal" role="dialog" aria-modal="true" aria-label="Карточка рейса"><div class="modal-header"><div><h3>${esc(o.id)} · ${esc(o.from)} → ${esc(o.to)}</h3><p>Все данные заявки в одном месте</p></div><button class="close" data-close aria-label="Закрыть">×</button></div><div class="detail-grid">${props.map(([a,b])=>`<div class="detail"><span>${esc(a)}</span><b>${esc(b)}</b></div>`).join('')}</div><hr class="divider"><div class="strong-note">В рабочей версии здесь будут доступны документы и история изменений с разграничением прав. Подробные персональные данные водителя — только уполномоченным сотрудникам.</div><div class="modal-footer">${state.user?.role==='shipper'&&o.status==='confirmed'?`<button class="btn" data-complete="${esc(o.id)}">Рейс завершён</button>`:''}${state.user?.role==='shipper'&&['search','choice'].includes(o.status)?`<button class="btn" data-cancel-order="${esc(o.id)}">Отменить заявку</button>`:''}<button class="btn primary" data-close>Закрыть</button></div></div></div>`}
 function newModal(){return `<div class="modal-backdrop" data-closebg><div class="modal" role="dialog" aria-modal="true" aria-label="Новая заявка"><div class="modal-header"><div><h3>Новая перевозка</h3><p>Адреса и контакты доступны только допущенным участникам</p></div><button class="close" data-close aria-label="Закрыть">×</button></div><form id="newForm"><div class="split">
 <div class="field"><label>Город погрузки *</label><input name="from" required value="Орск" maxlength="120"></div><div class="field"><label>Город доставки *</label><input name="to" required maxlength="120"></div>
-<div class="field"><label>Грузоотправитель</label><input name="pickupCompany" value="${esc(state.user.organizationName||'')}" maxlength="160"></div><div class="field"><label>Контакт на погрузке</label><input name="pickupContact" maxlength="200"></div><div class="field"><label>Точный адрес погрузки *</label><input name="pickupAddress" maxlength="300" required></div><div class="field"><label>Точный адрес доставки *</label><input name="deliveryAddress" maxlength="300" required></div>
+<div class="field"><label>Грузоотправитель</label><input name="pickupCompany" value="${esc(state.user.organizationName||'')}" maxlength="160"></div><div class="field"><label>Контакт на погрузке</label><input name="pickupContact" maxlength="200"></div><div class="field"><label>Точный адрес погрузки *</label><input name="pickupAddress" maxlength="300" required></div><div class="field"><label>Точный адрес доставки<span data-delivery-required> *</span></label><input name="deliveryAddress" maxlength="300" required></div>
 <div class="field"><label>Дата погрузки *</label><input name="date" type="date" value="${state.day}" required></div><div class="field"><label>Время *</label><input name="time" type="time" value="09:00" required></div>
 <div class="field"><label>Дата выгрузки *</label><input name="unload" type="date" value="${state.day}" required></div><div class="field"><label>Продукт *</label><input name="product" value="Вода техническая" maxlength="180" required></div>
 <div class="field"><label>Объём, т *</label><input name="tons" type="number" step="0.1" min="0.1" max="100" value="24" required></div><div class="field"><label>Грузополучатель *</label><input name="recipient" maxlength="140" required></div>
-<div class="field"><label>Контакт грузополучателя *</label><input name="recipientContact" maxlength="200" placeholder="Имя и служебный телефон" required></div><div class="field"><label>Тип ТС</label><select name="vehicleType"><option>Автоцистерна</option><option>Фура</option></select></div>
+<div class="field"><label>Контакт грузополучателя<span data-delivery-required> *</span></label><input name="recipientContact" maxlength="200" placeholder="Имя и служебный телефон" required></div><div class="field"><label>Тип ТС</label><select name="vehicleType"><option>Автоцистерна</option><option>Фура</option></select></div>
 <div class="field"><label>Ставка, ₽ за тонну</label><input name="tariffPerTon" type="number" min="0" max="2000000" step="1" placeholder="Из истории / вручную"></div><div class="field"><label>Стоимость за рейс, ₽</label><input name="budget" type="number" min="0" max="50000000" step="1" placeholder="Автоматический пересчёт"></div>
 <div class="field"><label>Способ</label><select name="mode"><option>Доставка</option><option>Самовывоз</option></select></div></div>
 <p id="tariffHint" class="price-info">При совпадении маршрута система предложит ставку последнего завершённого рейса. Без истории цену задаёт логист.</p>
@@ -167,7 +167,7 @@ async function api(path,method='GET',body){
  if(!r.ok){const msg=typeof data.detail==='string'?data.detail:Array.isArray(data.detail)?'Проверьте обязательные поля и допустимые значения':'Ошибка сервера ('+r.status+')';if(r.status===401&&path!=='/api/login'&&generation===authGeneration)showLogin();const err=Error(msg);err.status=r.status;throw err}
  return data;
 }
-async function loadState({fromEvent=false}={}){
+async function loadState({fromEvent=false,keepModal=false}={}){
  const generation=authGeneration,requestId=++lastStateRequest,openedModal=state.modal;
  const data=await api('/api/state');
  if(generation!==authGeneration||requestId!==lastStateRequest)return;
@@ -179,7 +179,7 @@ async function loadState({fromEvent=false}={}){
  state.firstNotes=false;state.seenNoteId=Math.max(state.seenNoteId,highest);
  if(!state.focus||!getOrder(state.focus))state.focus=state.orders.find(o=>o.date===state.day&&o.status==='choice')?.id||state.orders.find(o=>o.date===state.day)?.id||state.orders[0]?.id||'';
  if(!state.initialized){state.day=data.day;state.initialized=true}
- if(!fromEvent&&state.modal===openedModal)state.modal='';document.body.classList.remove('login-view');if(!(fromEvent&&state.modal))render();if(!eventFeed)connectEvents();
+ if(!fromEvent&&!keepModal&&state.modal===openedModal)state.modal='';document.body.classList.remove('login-view');if(!(fromEvent&&state.modal))render();if(!eventFeed)connectEvents();
 }
 function showLogin(){
  authGeneration++;lastStateRequest++;
@@ -220,7 +220,13 @@ document.addEventListener('click',async e=>{
  if(el.dataset.readNote){await api('/api/notifications/'+el.dataset.readNote+'/read','POST');await loadState();state.modal='notices';render();return}
  if(el.dataset.noticeOrder){const o=getOrder(el.dataset.noticeOrder);state.modal='';if(o){state.focus=o.id;state.day=o.date;state.view=state.user.role==='shipper'?'overview':state.user.role;state.modal='detail:'+o.id;render()}return}
  if(el.dataset.searchOrder){const o=getOrder(el.dataset.searchOrder);await api('/api/orders/'+encodeURIComponent(o.id)+'/search','POST',{public_external:!!o.publicExternal});await loadState();toast('Поиск машины запущен. Перевозчики уведомлены.');return}
- if(el.dataset.approveCarrier){await api('/api/shipper/carriers/'+Number(el.dataset.approveCarrier)+'/approve','POST');await loadState();toast('Перевозчик допущен заказчиком');return}
+ if(el.dataset.approveCarrier){
+   if(el.disabled)return;
+   el.disabled=true;
+   try{await api('/api/shipper/carriers/'+Number(el.dataset.approveCarrier)+'/approve','POST');await loadState({keepModal:true});toast('Перевозчик допущен заказчиком')}
+   finally{if(el.isConnected)el.disabled=false}
+   return;
+ }
  if(el.dataset.complete){await api('/api/orders/'+encodeURIComponent(el.dataset.complete)+'/complete','POST');await loadState();toast('Рейс завершён, тариф сохранён в истории');return}
  if(el.dataset.cancelOrder){if(!window.confirm('Отменить эту заявку?'))return;await api('/api/orders/'+encodeURIComponent(el.dataset.cancelOrder)+'/cancel','POST');await loadState();toast('Заявка отменена');return}
  if(el.dataset.rejectQuote){await api('/api/offers/'+Number(el.dataset.rejectQuote.slice(2))+'/reject','POST');await loadState();toast('Предложение отклонено');return}
@@ -248,7 +254,14 @@ document.addEventListener('input',e=>{
  }
  if(e.target.id==='search'){state.search=e.target.value;const pos=e.target.selectionStart;render();const next=document.getElementById('search');next?.focus();next?.setSelectionRange(pos,pos)}});
 document.addEventListener('paste',e=>{if(e.target.matches('input[type=email]')){const value=e.clipboardData?.getData('text')?.trim();if(value&&/^mailto:/i.test(value)){e.preventDefault();e.target.value=value.replace(/^mailto:/i,'')}}});
-document.addEventListener('change',e=>{if(e.target.id==='signupRole'){const field=document.getElementById('signupOrganizationField');field.hidden=e.target.value==='driver';field.style.display=field.hidden?'none':'';const organization=document.getElementById('signupOrganization');organization.required=!field.hidden;organization.disabled=field.hidden;const inn=document.getElementById('signupInn'),group=document.getElementById('signupInnField');group.hidden=field.hidden;group.style.display=field.style.display;inn.required=!field.hidden;inn.disabled=field.hidden}const f=e.target.closest('#newForm');if(f&&['from','to','pickupAddress','deliveryAddress','product','vehicleType','tons'].includes(e.target.name))suggestTariff()});
+document.addEventListener('change',e=>{
+ if(e.target.matches('#newForm [name="mode"]')){
+   const form=e.target.form,delivery=e.target.value==='Доставка';
+   form.elements.deliveryAddress.required=delivery;
+   form.elements.recipientContact.required=delivery;
+   for(const marker of form.querySelectorAll('[data-delivery-required]'))marker.hidden=!delivery;
+ }
+ if(e.target.id==='signupRole'){const field=document.getElementById('signupOrganizationField');field.hidden=e.target.value==='driver';field.style.display=field.hidden?'none':'';const organization=document.getElementById('signupOrganization');organization.required=!field.hidden;organization.disabled=field.hidden;const inn=document.getElementById('signupInn'),group=document.getElementById('signupInnField');group.hidden=field.hidden;group.style.display=field.style.display;inn.required=!field.hidden;inn.disabled=field.hidden}const f=e.target.closest('#newForm');if(f&&['from','to','pickupAddress','deliveryAddress','product','vehicleType','tons'].includes(e.target.name))suggestTariff()});
 document.addEventListener('submit',async e=>{
  if(!['newForm','bidForm','loginForm','signupForm','changePasswordForm','inviteForm','vehicleForm'].includes(e.target.id))return;
  e.preventDefault();const form=e.target;if(form.dataset.submitting==='1')return;const d=Object.fromEntries(new FormData(form));form.dataset.submitting='1';const submit=form.querySelector('[type=submit]');if(submit)submit.disabled=true;
