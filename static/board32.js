@@ -32,7 +32,7 @@ function directory32(data){
         if(state.user.role==='carrier'&&(p.role!=='driver'||p.canReceive))buttons+=action32(p.shared?'Закрыть мой график':'Открыть мой график','share',i);
         if(p.canViewFleet)buttons+=action32('График машин','shared',p.id);
         if(state.user.role==='carrier'&&p.role==='driver'&&!p.canReceive)buttons+=button31('Подключить кабинет','rosterContact',p.id);
-        return `<details class="partner32" data-partner-row="${Number(p.id)}"><summary>${esc(p.name)} <small>${esc(roleTitle(p.role||'driver'))}</small></summary>${p.inn?`<p>ИНН ${esc(p.inn)}</p>`:''}${controls32(buttons)}${participantNote29(p)}</details>`;
+        return `<details class="partner32" data-partner-row="${Number(p.id)}" data-partner-role="${esc(p.role)}"><summary>${esc(p.name)} <small>${esc(roleTitle(p.role||'driver'))}</small></summary>${p.inn?`<p>ИНН ${esc(p.inn)}</p>`:''}${controls32(buttons)}${participantNote29(p)}</details>`;
     }).join('');
     const shown=data.invitations.filter(x=>!x.archived);
     function inviteItem(x){
@@ -103,7 +103,12 @@ async function open32(modal,id=''){
     const paths={partners:'/api/partners',staff:'/api/employees',edit:'/api/journal/'+encodeURIComponent(id)+'/editor',trash:'/api/journal-deletions',settings:'/api/fleet/settings',shared:'/api/fleet/shared/'+encodeURIComponent(id)+'?week='+encodeURIComponent(board32.week||state.day)};
     const data=paths[modal]?await api(paths[modal]):null;
     if(state.user?.id!==uid||seq!==board32.token||state.modal!==old)return;
+    const keepExpanded=state.modal==='board:'+modal;
+    const key=el=>el.dataset.partnerRow?el.dataset.partnerRole+'/'+el.dataset.partnerRow:el.querySelector('summary')?.textContent.trim();
+    const oldPanel=document.getElementById('overlay');
+    const expanded=new Set(keepExpanded?[...oldPanel.querySelectorAll('details[open]')].map(key):[]);
     Object.assign(board32,{owner:uid,modal,id,data});state.modal='board:'+modal;render();
+    if(expanded.size)for(const detail of oldPanel.querySelectorAll('details'))detail.open=expanded.has(key(detail));
 }
 function renderMatches32(r){
     const carrier=state.user.role==='carrier';
@@ -149,7 +154,8 @@ function link32(value){
 document.addEventListener('click',async e=>{
     const b=e.target.closest('[data-b32]');if(!b||!state.user)return;
     e.preventDefault();e.stopImmediatePropagation();
-    const action=b.dataset.b32,id=b.dataset.id||'',uid=state.user.id;
+    const action=b.dataset.b32,id=b.dataset.id||'',uid=state.user.id,screen=state.modal,ticket=board32.token;
+    const onScreen=()=>state.user?.id===uid&&state.modal===screen&&board32.token===ticket;
     b.disabled=true;
     try{
         if(['partners','staff','invite','trash','settings','edit'].includes(action)){await open32(action,id);return}
@@ -161,9 +167,9 @@ document.addEventListener('click',async e=>{
         }
         if(action==='closeStaff'){
             if(!confirm('Закрыть этому сотруднику вход в кабинет компании?'))return;
-            await api('/api/participants/team/'+Number(id)+'/deactivate','POST');if(state.user?.id===uid)await open32('staff');return;
+            await api('/api/participants/team/'+Number(id)+'/deactivate','POST');if(onScreen())await open32('staff');return;
         }
-        if(action==='inviteLink'){const r=await api('/api/participants/invitations/'+Number(id)+'/link','POST');if(state.user?.id===uid)link32(r.link);return}
+        if(action==='inviteLink'){const r=await api('/api/participants/invitations/'+Number(id)+'/link','POST');if(onScreen())link32(r.link);return}
         if(action==='sendCompany'){const r=await api('/api/partners/invite','POST',{company_id:Number(id)});if(state.user?.id===uid)toast(r.message||'Приглашение отправлено');}
         else if(action==='accept'||action==='reject'){await api('/api/participants/invitations/'+Number(id)+'/respond','POST',{accepted:action==='accept'});}
         else if(action==='renew')await api('/api/participants/invitations/'+Number(id)+'/renew','POST');
@@ -173,7 +179,7 @@ document.addEventListener('click',async e=>{
             if(action==='share')await api('/api/fleet/share','POST',{partner_id:p.id,subject:p.role==='driver'?'driver':'company',enabled:!p.shared});
             else{if(!confirm('Удалить из партнёров '+p.name+'?'))return;await api(p.remove,'POST')}
         }else return;
-        if(state.user?.id!==uid)return;await loadState({fromEvent:true});await open32('partners');
+        if(state.user?.id!==uid)return;await loadState({fromEvent:true});if(onScreen())await open32('partners');
     }catch(err){errorToast(err)}
     finally{if(b.isConnected)b.disabled=false}
 },true);
