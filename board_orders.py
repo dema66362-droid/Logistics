@@ -99,12 +99,19 @@ def editor(ref:str,user=Depends(c.user_session)):
         if potential[0] is not None:
             ids={potential[0]}
             if not manual:
-                ids.update(db.scalars(select(c.Approval.carrier_id).where(c.Approval.shipper_id==s.shipper_id,c.Approval.active.is_(True))))
+                offered=select(c.Offer.carrier_id).where(c.Offer.shipment_id==s.id,c.Offer.status=='not_selected')
+                ids.update(cid for cid in db.scalars(offered) if c.allowed(db,s,cid))
             for cid in sorted(ids):
                 org=db.get(c.Organization,cid)
                 if not org or org.disposition!='active':continue
-                candidates.append({'id':cid,'name':org.name,'drivers':[{'id':d.id,'name':d.name} for d in c.carrier_drivers(db,cid)],
-                    'vehicles':[{'id':v.id,'name':v.label} for v in db.scalars(select(c.Vehicle).where(c.Vehicle.org_id==cid))]})
+                drivers=c.carrier_drivers(db,cid)
+                vehicles=list(db.scalars(select(c.Vehicle).where(c.Vehicle.org_id==cid)))
+                if cid!=potential[0]:
+                    offers=list(db.scalars(select(c.Offer).where(c.Offer.shipment_id==s.id,c.Offer.carrier_id==cid,c.Offer.status=='not_selected')))
+                    drivers=[d for d in drivers if any(q.driver_id==d.id for q in offers)]
+                    vehicles=[v for v in vehicles if any(q.vehicle_id==v.id for q in offers)]
+                candidates.append({'id':cid,'name':org.name,'drivers':[{'id':d.id,'name':d.name} for d in drivers],
+                    'vehicles':[{'id':v.id,'name':v.label} for v in vehicles]})
         data={key:getattr(s,key) for key in ('from_city','to_city','recipient','product','tons','vehicle_kind','mode','manager','note',
             'pickup_company','pickup_contact','pickup_address','delivery_address','recipient_contact','terms','public_external','epd','etrn','hazardous')}
         data.update(vehicle_type=data.pop('vehicle_kind'),date=day,time=time,unload=chosen.delivery_day if chosen and chosen.delivery_day else s.unload_date,
@@ -122,6 +129,10 @@ def change_crew(db,s,user,ids,manual,selected,start,end,kind,tons):
     cid,did,vid=ids
     if manual and cid!=manual.carrier_id or not manual and cid!=current[0] and not c.allowed(db,s,cid):
         c.forbidden('Выберите перевозчика из подтверждённых партнёров')
+    if cid!=current[0]:
+        offered=db.scalar(select(c.Offer.id).where(c.Offer.shipment_id==s.id,c.Offer.carrier_id==cid,c.Offer.driver_id==did,
+            c.Offer.vehicle_id==vid,c.Offer.status=='not_selected').limit(1))
+        if not offered:c.forbidden('Сначала получите предложение нового перевозчика по этой заявке')
     d=db.get(c.Driver,did);v=db.get(c.Vehicle,vid);org=db.get(c.Organization,cid)
     if not org or org.disposition!='active' or not d or not c.carrier_has_driver(db,cid,d) or not v or v.org_id!=cid:
         c.invalid('Экипаж отсутствует в пуле выбранного перевозчика',422)
@@ -196,6 +207,14 @@ def edit(ref:str,payload:Edit,request:Request,user=Depends(c.user_session)):
                 if selected:selected.pickup_date,selected.pickup_time=day,time
             if manual:s.pickup_date,s.pickup_time=day,time
             db.execute(update(c.SlotProposal).where(c.SlotProposal.shipment_id==s.id,c.SlotProposal.status=='pending').values(status='superseded'))
+        changed_terms=payload.terms.strip()!=s.terms.strip()
+        if changed_terms:
+            s.terms_version+=1
+            if not selected and not manual:
+                reserved=list(db.scalars(select(c.Offer).where(c.Offer.shipment_id==s.id,c.Offer.status.in_(('driver_ok','waiting_driver')))))
+                for bid in reserved:bid.status='withdrawn'
+                if reserved and s.status=='choice':s.status='search'
+                db.execute(update(c.SlotProposal).where(c.SlotProposal.shipment_id==s.id,c.SlotProposal.status=='pending').values(offer_id=None))
         for field in ('from_city','to_city','recipient','product','tons','vehicle_kind','mode','note','pickup_company','pickup_contact',
                       'pickup_address','delivery_address','recipient_contact','terms','public_external','hazardous','rate','budget'):
             setattr(s,field,getattr(validated,field))

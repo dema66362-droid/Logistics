@@ -2131,14 +2131,26 @@ def invite_participant(payload:InviteIn,request:Request,response:Response,user=D
     raw=secrets.token_urlsafe(40)
     with db_write() as db:
         scope=ParticipantInvitation.sender_user_id==user['id'] if user['role']=='driver' else ParticipantInvitation.sender_org_id==user['org_id']
-        previous=db.scalar(select(ParticipantInvitation).where(scope,ParticipantInvitation.target_email==email,
+        target=db.scalar(select(User).where(User.email==email))
+        same_target=ParticipantInvitation.target_email==email
+        if target and user['role']!='driver' and payload.kind in ('partner','peer'):
+            company_users=select(User.id).where(User.org_id==target.org_id,User.role==target.role)
+            same_target=same_target | ParticipantInvitation.target_user_id.in_(company_users)
+            own_users=select(User.id).where(User.org_id==user['org_id'],User.role==user['role'])
+            incoming=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.sender_org_id==target.org_id,
+                ParticipantInvitation.kind==payload.kind,ParticipantInvitation.status=='pending',
+                ParticipantInvitation.expires>datetime.now(timezone.utc),ParticipantInvitation.target_user_id.in_(own_users)).limit(1))
+            if incoming:
+                response.status_code=200
+                return {'id':incoming.id,'alreadyExists':True,'status':'pending','emailSent':False,'link':None,
+                        'message':'У вас уже есть входящее приглашение этой компании. Примите или отклоните его в журнале.'}
+        previous=db.scalar(select(ParticipantInvitation).where(scope,same_target,
                             ParticipantInvitation.kind==payload.kind).order_by(ParticipantInvitation.id.desc()))
         if previous:
             previous.sender_archived=False
             response.status_code=200
             return {'id':previous.id,'alreadyExists':True,'status':previous.status,'emailSent':False,'link':None,
                     'message':'Приглашение уже сохранено в вашем пуле. Повторное уведомление не отправлялось.'}
-        target=db.scalar(select(User).where(User.email==email))
         if target and (not target.active or target.role!=payload.role or db.get(Organization,target.org_id).disposition!='active'): invalid('Для этого адреса выбрана неподходящая роль или доступ закрыт')
         if target and target.org_id==user['org_id']: invalid('Участник уже состоит в вашей компании')
         if payload.kind=='team' and target:
