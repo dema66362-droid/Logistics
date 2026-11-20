@@ -22,7 +22,7 @@ function renderDashboard31(markup) {
     main.append(template.content);
 }
 const weekNames31=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
-const stageNames31={waiting_driver:'Ждём водителя',driver_ok:'Резерв',selected:'Назначен',completed:'Завершён'};
+const stageNames31={waiting_driver:'В плане',driver_ok:'Экипаж в резерве',selected:'Назначен',completed:'Завершён'};
 const shortDate31=d=>d?d.slice(8,10)+'.'+d.slice(5,7):'—';
 const yearMonth31=d=>d.slice(0,7);
 let dayFilter31='',fullColumns31=false,detailDriver31=0,form31={},planCache31={key:'',version:-1,data:null,request:0};
@@ -46,20 +46,20 @@ function orderStage31(o){
     if(o.reviewOnly)return 'На проверке допуска';
     const q=state.offers.filter(q=>q.orderId===o.id);
     if(q.some(q=>q.status==='driver_ok'))return 'Выбор заказчика';
-    if(q.some(q=>q.status==='waiting_driver'))return 'Ждём водителя';
+    if(q.some(q=>q.status==='waiting_driver'))return 'В плане';
     return o.searchLaunched?'У перевозчика':'Черновик';
 }
 function tableFields31(o) {
-    return [['Заявка',o.id],['Менеджер',o.manager],['Дата отгрузки',shortDate31(o.date)+' '+o.time],['Дата выгрузки',shortDate31(o.unload)],
+    return [['Заявка',o.id],['Создал',o.author],['Менеджер',o.manager],['Дата отгрузки',shortDate31(o.date)+' '+o.time],['Дата выгрузки',shortDate31(o.unload)],
         ['Грузополучатель',o.recipient],['Продукт',o.product],['Объём, т',o.tons],['№ электронной заявки',o.epd],['№ ЭТрН',o.etrn],
-        ['Способ поставки',o.mode],['Способ доставки',o.vehicleType],['Перевозчик',o.carrier],['Водитель',o.driver],['Адрес выгрузки',o.deliveryAddress],
+        ['Способ поставки',o.mode],['Способ доставки',o.vehicleType],['Перевозчик',carrierName32(o)],['Водитель',o.driver],['Адрес выгрузки',o.deliveryAddress],
         ['Данные автомобиля',o.car],['Данные на водителя',o.driver?'Карточка водителя':''],['Тариф за тонну',o.rate?rub(o.rate):''],['Стоимость перевозки',o.price?rub(o.price):'']];
 }
 function queueRows31(rows) {
     if(fullColumns31 && rows.length){
-        return `<div class="d31scroll"><table class="d31wide"><thead><tr><th>№ очереди</th>${tableFields31(rows[0]).map(([k])=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${rows.map((o,i)=>`<tr><td>${i+1}</td>${tableFields31(o).map(([,v],j)=>`<td>${j===0?button31(v,'detail',v):esc(v||'—')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+        return `<div class="d31scroll"><table class="d31wide"><thead><tr><th>№ очереди</th>${tableFields31(rows[0]).map(([k])=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${rows.map((o,i)=>`<tr><td>${i+1}</td>${tableFields31(o).map(([k,v],j)=>`<td>${j===0?button31(v,'detail',v):k==='Стоимость перевозки'?price32(o):esc(v||'—')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
     }
-    return rows.map((o,i)=>`<article class="d31queue"><div class="d31num">${i+1}</div><div class="d31time ${o.slotProposals?.length?'attention':''}">${esc(o.time)}</div><div class="d31route"><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${esc(o.pickupCompany||o.shipperName)} → ${esc(o.recipient)} · выгрузка ${shortDate31(o.unload)}</small></div><div class="d31crew">${esc(o.car||'Машина не назначена')}<small>${esc([o.carrier,o.driver].filter(Boolean).join(' · ')||orderStage31(o))}</small></div><div class="d31actions">${(!o.searchLaunched&&!o.reviewOnly&&o.status==='search')?button31(o.hazardous?'Запросить проверку':'Отправить заявку','send',o.id,true):''}${o.status==='choice'?button31('Предложения','choose',o.id):''}</div>${slotStatus31(o,true)}</article>`).join('');
+    return rows.map((o,i)=>`<article class="d31queue"><div class="d31num">${i+1}</div><div class="d31time ${o.slotProposals?.length?'attention':''}">${esc(o.time)}</div><div class="d31route"><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${esc(o.recipient)} · выгрузка ${shortDate31(o.unload)}</small></div><div class="d31crew">${esc(o.car||'Машина не назначена')}<small>Перевозчик · ${esc(carrierName32(o))}</small><small>${esc(o.driver||'')} ${price32(o)}</small><small>Создал · ${esc(o.author||'—')}</small></div><div class="d31actions">${(!o.searchLaunched&&!o.reviewOnly&&o.status==='search')?button31(o.hazardous?'Запросить проверку':'Отправить заявку','send',o.id,true):''}${o.status==='choice'?button31('Предложения','choose',o.id):''}</div>${slotStatus31(o,true)}</article>`).join('');
 }
 function shipperSchedule31(title){
     const dates=weekDates(),groups=dates.map(day=>{
@@ -73,10 +73,10 @@ function shipperSchedule31(title){
     const focus=groups.some(g=>g.day===dayFilter31)?dayFilter31:'';
     return htop(title,'Заказчик',`<button class="btn" data-export>CSV</button><button class="btn primary" data-new>＋ Новая заявка</button>`)+
         `<div class="d31">${alerts}<section class="panel d31panel">${periodBar31(weekTitle(),'week')}<div class="d31days">${groups.map((g,i)=>`<button class="d31day" data-dispatch="shipDay" data-id="${g.day}" aria-pressed="${focus===g.day}"><span>${weekNames31[i]}</span><b>${shortDate31(g.day)}</b><small>ТС · ${g.cars}</small></button>`).join('')}</div></section>
-        <section class="panel d31panel"><div class="section-head"><div><h2>Очередь на погрузку</h2><small>По времени подачи</small></div><div class="d31actions">${focus?button31('Вся неделя','clearDay'):''}${button31(fullColumns31?'Кратко':'Все 18 колонок','columns')}</div></div>${groups.filter(g=>!focus||g.day===focus).map(g=>`<div class="d31dayhead"><b>${weekNames31[dates.indexOf(g.day)]}, ${localeDay(g.day)}</b><span>Машин · ${g.cars} &nbsp; Без машины · ${g.open}</span></div>${queueRows31(g.rows)||'<p class="d31empty">Погрузок нет</p>'}`).join('')}</section></div>`;
+        <section class="panel d31panel"><div class="section-head"><div><h2>Очередь на погрузку</h2><small>По времени подачи</small></div><div class="d31actions">${focus?button31('Вся неделя','clearDay'):''}${button31(fullColumns31?'Кратко':'Все колонки','columns')}</div></div>${groups.filter(g=>!focus||g.day===focus).map(g=>`<div class="d31dayhead"><b>${weekNames31[dates.indexOf(g.day)]}, ${localeDay(g.day)}</b><span>Машин · ${g.cars} &nbsp; Без машины · ${g.open}</span></div>${queueRows31(g.rows)||'<p class="d31empty">Погрузок нет</p>'}`).join('')}</section></div>`;
 }
-overview=()=>shipperSchedule31('План отгрузок');
-table=()=>shipperSchedule31('Таблица отгрузок');
+overview=()=>shipperSchedule31('План отгрузок')+recommendPanel32();
+table=()=>shipperSchedule31('Таблица отгрузок')+recommendPanel32();
 allOffers=function(){
     const rows=state.orders.filter(o=>['search','choice'].includes(o.status)&&(o.slotProposals?.length||state.offers.some(q=>q.orderId===o.id&&['waiting_driver','driver_ok'].includes(q.status))));
     return htop('Предложения перевозчиков','Заказчик')+`<div class="d31"><section class="panel d31panel"><h2>Предложения по заявкам · ${rows.length}</h2>${rows.map(o=>`<div class="d31request"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} в ${esc(o.time)} · ${esc(orderStage31(o))}</small></div>${button31('Открыть предложения','detail',o.id)}${slotStatus31(o,true)}</div>`).join('')||'<p class="d31empty">Предложений пока нет.</p>'}</section></div>`;
@@ -100,7 +100,7 @@ function presentMonth31(data) {
         const kind=leave?'vacation':jobs.some(j=>j.confirmed)?'booked':jobs.length?'pending':'free';
         const tag=leave?'Отпуск':jobs.length?('Рейс · '+jobs.length):'';
         return `<button type="button" class="d31monthday ${kind}" data-dispatch="driverDay" data-id="${d}" aria-label="${localeDay(d)} · ${tag||'Свободно'}" aria-pressed="${d===chosen}"><b>${Number(d.slice(8))}</b><small>${tag}</small></button>`;
-    }).join('')}</div><div class="d31legend"><span>● Назначен</span><span>● Запрос или резерв</span><span>● Отпуск</span></div></section>
+    }).join('')}</div><div class="d31legend"><span>● Назначен</span><span>● Экипаж в резерве</span><span>● Отпуск</span></div></section>
     <section class="panel d31panel"><div class="section-head"><h2>${localeDay(chosen)}</h2>${button31('Внести отпуск','leave')}</div>${currentLeave?`<div class="d31job"><b>Отпуск · ${shortDate31(currentLeave.start)} — ${shortDate31(currentLeave.end)}</b>${button31('Убрать отпуск','removeLeave',currentLeave.id)}</div>`:''}${chosenJobs.map(scheduleRow31).join('')||(!currentLeave?'<p class="d31empty">На этот день рейсов нет.</p>':'')}</section>`;
 }
 function carrierBoard31(data){
@@ -136,17 +136,11 @@ function planPanel31(){
     }
     return `<div data-period-plan aria-live="polite">${cache.data?(month?presentMonth31(cache.data):carrierBoard31(cache.data)):'<p class="d31empty">Загрузка графика…</p>'}</div>`;
 }
-function driverRequests31(){
-    const requests=state.offers.filter(q=>q.status==='waiting_driver'&&getOrder(q.orderId)).map(q=>({o:getOrder(q.orderId),q}));
-    for(const o of state.orders.filter(o=>o.internal&&o.privateStage==='waiting_driver'))requests.push({o,q:null});
-    if(!requests.length)return '';
-    return `<section class="panel d31panel"><h2>Запросы на рейс · ${requests.length}</h2>${requests.map(({o,q})=>`<div class="d31request"><div><b>${esc(o.from)} → ${esc(o.to)}</b><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(q?.carrier||o.carrier)} · выгрузка ${shortDate31(o.unload)}</small></div><div class="d31actions">${q?`<button class="btn small primary" data-driver-ok="${esc(q.id)}">Подтверждаю рейс</button><button class="btn small" data-decline="${esc(q.id)}">Не могу</button>${button31('Предложить время','slot',o.id)}`:button31('Подтверждаю рейс','internalAccept',o.id,true)+button31('Не могу','internalDecline',o.id)}${button31('Детали','detail',o.id)}</div>${slotStatus31(o)}</div>`).join('')}</section>`;
-}
-driver=()=>htop('Кабинет водителя','Водитель',button31('＋ Отпуск','leave'))+`<div class="d31">${planPanel31()}${driverRequests31()}</div>`;
+driver=()=>htop('Кабинет водителя','Водитель',button31('＋ Отпуск','leave'))+`<div class="d31">${planPanel31()}</div>`;
 carrier=function(){
     const inbox=state.orders.filter(o=>!o.internal&&['search','choice'].includes(o.status)&&!state.offers.some(q=>q.orderId===o.id&&['waiting_driver','driver_ok','selected'].includes(q.status)));
-    const toolbar=(state.user.is_admin?'<button class="btn" data-add-driver>＋ Водитель</button> ':'')+button31('Запланировать рейс','manual','',true);
-    return htop('Кабинет перевозчика','Перевозчик',toolbar)+`<div class="d31">${planPanel31()}<section class="panel d31panel"><h2>Входящие заявки · ${inbox.length}</h2>${inbox.map(o=>`<article class="d31request"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.shipperName||'Заказчик')} · ${esc(o.product)} · ${fmt(o.tons)} т</small></div><div class="d31actions">${o.reviewOnly?button31('Подтвердить получение','reviewSeen',o.id):`<button class="btn primary small" data-bid="${esc(o.id)}">Предложить машину</button>${button31('Предложить время','slot',o.id)}`}${o.addressed?button31('Отклонить','declineIncoming',o.id):''}</div>${slotStatus31(o)}</article>`).join('')||'<p class="d31empty">Новых заявок нет.</p>'}</section></div>`;
+    const toolbar='<button class="btn" data-add-driver>＋ Водитель</button> <button class="btn" data-add-vehicle>＋ Машина</button> '+button31('Запланировать рейс','manual','',true);
+    return htop('Кабинет перевозчика','Перевозчик',toolbar)+`<div class="d31">${planPanel31()}<section class="panel d31panel"><h2>Входящие заявки · ${inbox.length}</h2>${inbox.map(o=>`<article class="d31request"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.shipperName||'Заказчик')} · ${esc(o.product)} · ${fmt(o.tons)} т</small></div><div class="d31actions">${o.reviewOnly?button31('Подтвердить получение','reviewSeen',o.id):`<button class="btn primary small" data-bid="${esc(o.id)}">Предложить машину</button>${button31('Предложить время','slot',o.id)}`}${o.addressed?button31('Отклонить','declineIncoming',o.id):''}</div>${slotStatus31(o)}</article>`).join('')||'<p class="d31empty">Новых заявок нет.</p>'}</section>${recommendPanel32()}</div>`;
 };
 function accountInn31(account) {
     if(state.user?.role==='driver')return '';
@@ -162,35 +156,32 @@ function details31(ref){
     if(!o)return '';
     const role=state.user.role,alive=['search','choice','confirmed'].includes(o.status),my=state.offers.filter(q=>q.orderId===ref);
     const proposed=slotStatus31(o,role==='shipper');
-    const fields=[['Заказчик',o.shipperName],['Подача по очереди',shortDate31(o.date)+' в '+o.time],['Город погрузки',o.from],['Грузоотправитель',o.pickupCompany],['Адрес погрузки',o.pickupAddress],['Контакт на погрузке',o.pickupContact],['Выгрузка',shortDate31(o.unload)],['Город выгрузки',o.to],['Грузополучатель',o.recipient],['Адрес выгрузки',o.deliveryAddress],['Контакт на выгрузке',o.recipientContact],['Продукт',o.product],['Объём, т',o.tons],['Автомобиль',o.car],['Водитель',o.driver],['Перевозчик',o.carrier],['Требования',o.terms]];
-    if(role!=='driver')fields.push(['Менеджер',o.manager],['Номер ЭПД',o.epd],['Номер ЭТрН',o.etrn],['Тариф за тонну',o.rate?rub(o.rate):''],['Стоимость',o.price?rub(o.price):''],['Комментарий',o.note]);
+    const fields=[...(role==='shipper'?[]:[['Заказчик',o.shipperName]]),['Создал',o.author],['Подача по очереди',shortDate31(o.date)+' в '+o.time],['Город погрузки',o.from],['Грузоотправитель',o.pickupCompany],['Адрес погрузки',o.pickupAddress],['Контакт на погрузке',o.pickupContact],['Выгрузка',shortDate31(o.unload)],['Город выгрузки',o.to],['Грузополучатель',o.recipient],['Адрес выгрузки',o.deliveryAddress],['Контакт на выгрузке',o.recipientContact],['Продукт',o.product],['Объём, т',o.tons],['Автомобиль',o.car],['Водитель',o.driver],['Перевозчик',carrierName32(o)],['Требования',o.terms]];
+    if(role!=='driver')fields.push(['Менеджер',o.manager],['Номер ЭПД',o.epd],['Номер ЭТрН',o.etrn],['Тариф за тонну',o.rate?rub(o.rate):''],['Комментарий',o.note]);
     let actions='';
     if(!o.internal&&alive&&!o.hazardous)actions+=button31(role==='shipper'?'Изменить время подачи':'Предложить время','slot',ref);
     if(role==='shipper'){
         if(o.status==='search'&&!o.searchLaunched&&!o.reviewOnly)actions+=button31(o.hazardous?'Запросить проверку':'Отправить заявку','send',ref,true);
         if(o.status==='confirmed')actions+=`<button class="btn small primary" data-complete="${esc(ref)}">Завершить рейс</button>`;
-        if(['choice','search'].includes(o.status))actions+=`<button class="btn small" data-cancel-order="${esc(ref)}">Отменить заявку</button>`;
     } else if(o.internal){
-        if(role==='driver'&&o.privateStage==='waiting_driver')actions+=button31('Подтверждаю рейс','internalAccept',ref,true)+button31('Не могу','internalDecline',ref);
-        if(role==='carrier'&&['waiting_driver','selected'].includes(o.privateStage))actions+=button31('Отменить рейс','internalCancel',ref);
         if(role==='carrier'&&o.privateStage==='selected')actions+=button31('Завершить рейс','internalComplete',ref,true);
     } else if(role==='carrier'){
         if(o.reviewOnly)actions+=button31('Подтвердить получение','reviewSeen',ref);
         else if(['search','choice'].includes(o.status)&&!my.some(q=>['waiting_driver','driver_ok','selected'].includes(q.status)))actions+=`<button class="btn small primary" data-bid="${esc(ref)}">Предложить машину</button>`;
     }
+    if(o.canEdit && o.status!=='cancelled')actions+=action32('Редактировать','edit',ref)+action32('Отмена заявки','cancel',ref);
     const offers=my.filter(q=>['waiting_driver','driver_ok','selected'].includes(q.status)).map(q=>{
         let buttons='';
         if(q.status==='driver_ok'&&role==='shipper'){
-            if(!q.approved)buttons+=`<button class="btn small" data-approve-carrier="${esc(q.carrierId)}" title="Допустить перевозчика после проверки">Добавить в пул</button>`;
+            if(!q.approved)buttons+=`<button class="btn small" data-approve-carrier="${esc(q.carrierId)}" title="Предложить партнёрство">Пригласить перевозчика</button>`;
             else if(q.day===o.date&&q.pickup===o.time&&!o.slotProposals?.some(p=>p.offerId===Number(q.id.slice(2))||p.carrierId===q.carrierId))buttons+=`<button class="btn small primary" data-select-quote="${esc(q.id)}">Назначить перевозчика</button>`;
             buttons+=`<button class="btn small" data-reject-quote="${esc(q.id)}">Отклонить предложение</button>`;
         }
         if(role==='carrier'&&q.status!=='selected')buttons+=`<button class="btn small" data-withdraw-quote="${esc(q.id)}">Отозвать предложение</button>`;
-        if(role==='driver'&&q.status==='waiting_driver')buttons+=`<button class="btn small primary" data-driver-ok="${esc(q.id)}">Подтверждаю рейс</button><button class="btn small" data-decline="${esc(q.id)}">Не могу</button>`;
         return `<div class="job"><b>${esc(q.carrier)} · ${esc(q.driver)} · ${esc(q.car)}</b><small>${esc(stageNames31[q.status])}${role==='driver'?'':' · '+rub(q.price)}</small><div class="d31actions">${buttons}</div></div>`;
     }).join('');
     const received=(o.recipients||[]).map(r=>esc(r.name)+' · '+({delivered:'В кабинете',review_delivered:'Запрос отправлен',review_seen:'Получение подтверждено',declined:'Отклонена'}[r.status]||'')).join('<br>');
-    return dialog29('Карточка рейса',`<h3>${esc(o.from)} → ${esc(o.to)}</h3><p>${esc(o.id)} · ${esc(orderStage31(o))}</p>${proposed}<div class="detail-grid">${fields.filter(([,v])=>v!==undefined&&v!==null&&v!=='').map(([k,v])=>`<div class="detail"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>${received?'<h3>Получатели заявки</h3>'+received:''}${offers?'<h3>Экипаж и назначение</h3>'+offers:''}`,`<div class="d31actions">${actions}<button class="btn small" data-close>Закрыть</button></div>`);
+    return dialog29('Карточка рейса',`<h3>${esc(o.from)} → ${esc(o.to)}</h3><p>${esc(o.id)} · ${esc(orderStage31(o))}</p>${proposed}${o.canEdit?'<p>Стоимость перевозки · '+price32(o)+'</p>':''}<div class="detail-grid">${fields.filter(([,v])=>v!==undefined&&v!==null&&v!=='').map(([k,v])=>`<div class="detail"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>${received?'<h3>Получатели заявки</h3>'+received:''}${offers?'<h3>Экипаж и назначение</h3>'+offers:''}`,`<div class="d31actions">${actions}<button class="btn small" data-close>Закрыть</button></div>`);
 }
 detailsModal=details31;
 function formDialog31(title,kind,body,submit){
@@ -216,7 +207,7 @@ function dispatchDialog() {
         const options=(state.participants?.partners||[]).filter(p=>p.role==='carrier');
         const checks=options.map(p=>`<label class="d31check"><input type="checkbox" name="recipient" value="${p.id}" ${options.length===1?'checked':''}>${esc(p.name)}</label>`).join('');
         const broadcast=o.hazardous?'':`<label class="d31check"><input type="checkbox" name="search">Искать по подходящим машинам${o.publicExternal?', включая открытый поиск':''}</label>`;
-        return formDialog31(o.hazardous?'Запросить проверку допуска':'Отправить заявку перевозчику','send',`<p>${esc(o.from)} → ${esc(o.to)} · ${shortDate31(o.date)} ${esc(o.time)}</p>${checks||'<p>В пуле пока нет перевозчиков. Подключите партнёра в разделе «Участники».</p>'}${broadcast}`,o.hazardous?'Отправить запрос проверки':'Отправить заявку');
+        return formDialog31(o.hazardous?'Запросить проверку допуска':'Отправить заявку перевозчику','send',`<p>${esc(o.from)} → ${esc(o.to)} · ${shortDate31(o.date)} ${esc(o.time)}</p>${checks||'<p>В пуле пока нет перевозчиков. Подключите партнёра в разделе «Партнёры».</p>'}${broadcast}`,o.hazardous?'Отправить запрос проверки':'Отправить заявку');
     }
     if(f.kind==='manual'){
         const drivers=state.drivers.map(d=>`<option value="${d.id}" ${d.id===Number(f.id)?'selected':''}>${esc(d.name)}</option>`).join('');
@@ -339,4 +330,3 @@ loadState=async function(options={}){
 };
 const originalSignOut31=showLogin;
 showLogin=function(){form31={};planCache31.request++;planCache31.key='';planCache31.data=null;detailDriver31=0;dayFilter31='';fullColumns31=false;originalSignOut31()};
-startApp();

@@ -167,13 +167,13 @@ def test_every_order_action_notifies_each_party_once_without_global_broadcast(ac
     oid=quote(carrier,ref,day)
     assert [count(c) for c in (ship,carrier,driver,outside)]==[3,2,1,0]
     assert post(driver,f'/api/offers/{oid}/driver-response?accepted=true').status_code==200
-    assert [count(c) for c in (ship,carrier,driver,outside)]==[4,3,2,0]
+    assert [count(c) for c in (ship,carrier,driver,outside)] == [3,2,1,0]
     assert post(carrier,'/api/participants/membership/leave').status_code==403
     assert post(driver,'/api/participants/membership/leave').status_code==409
     assert post(ship,f'/api/offers/{oid}/accept').status_code==200
-    assert [count(c) for c in (ship,carrier,driver,outside)]==[5,4,3,0]
+    assert [count(c) for c in (ship,carrier,driver,outside)] == [4,3,2,0]
     assert post(ship,f'/api/orders/{ref}/complete').status_code==200
-    assert [count(c) for c in (ship,carrier,driver,outside)]==[6,5,4,0]
+    assert [count(c) for c in (ship,carrier,driver,outside)] == [5,4,3,0]
     for c in (ship,carrier,driver):
         for n in state(c)['notifications']:
             if n['orderId']==ref:assert '90000' not in n['message'] and 'Условный склад' not in n['message']

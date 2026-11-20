@@ -50,30 +50,40 @@ def register(page,base,role,email,name,company):
 
 def participants(page):
     page.bring_to_front()
-    page.get_by_role('button',name='Участники',exact=True).click()
-    expect(page.get_by_role('dialog',name='Участники',exact=True)).to_be_visible()
+    page.get_by_role('button',name='Партнёры',exact=True).click()
+    expect(page.get_by_role('dialog',name='Партнёры',exact=True)).to_be_visible()
 
 def close(page):
     page.get_by_role('dialog').get_by_role('button',name='Закрыть',exact=True).click()
     expect(page.get_by_role('dialog')).to_have_count(0)
 
-def invitation(page,kind_role,email):
+def invite_company(page,name):
     participants(page)
-    page.get_by_label('Кого добавить',exact=True).select_option(kind_role)
-    page.get_by_label('Электронная почта участника',exact=True).fill(email)
-    page.get_by_role('button',name='Создать приглашение',exact=True).click()
-    expect(page.locator('#copyInvitation')).to_be_visible()
-    link=page.locator('#copyInvitation').input_value()
+    page.get_by_role('button',name='Пригласить',exact=True).click()
+    search=page.locator('#companySearch32')
+    search.fill(name[:3])
+    expect(page.locator('#found32 button')).to_have_count(0)
+    search.fill(name)
+    page.locator('#found32 .partner32').filter(has_text=name).get_by_role('button',name='Пригласить').click()
+    expect(page.get_by_role('dialog',name='Партнёры',exact=True)).to_be_visible()
     close(page)
-    return link
 
 def accept(page):
     participants(page)
-    pending=page.locator('[data-invitation-row]').filter(has=page.get_by_role('button',name='Принять приглашение',exact=True))
-    invitation_id=pending.get_attribute('data-invitation-row')
-    pending.get_by_role('button',name='Принять приглашение',exact=True).click()
-    # Wait for THIS response, rather than an earlier accepted invitation.
-    expect(page.locator('[data-invitation-row="'+invitation_id+'"]')).to_contain_text('Принято')
+    button=page.get_by_role('button',name='Принять',exact=True)
+    button.click()
+    expect(button).to_have_count(0)
+    close(page)
+
+def signup_driver_invite(page,email):
+    participants(page)
+    page.get_by_role('button',name='Пригласить',exact=True).click()
+    page.get_by_text('Пригласить водителя по почте',exact=True).click()
+    page.get_by_label('Почта водителя').fill(email)
+    with page.expect_response(lambda r:r.url.endswith('/api/participants/invitations')) as result:
+        page.get_by_role('button',name='Пригласить водителя',exact=True).click()
+    assert result.value.ok
+    page.get_by_role('button',name='К партнёрам').click()
     close(page)
 
 def check_public_collection(ship, carrier, driver, day):
@@ -106,18 +116,23 @@ def check_public_collection(ship, carrier, driver, day):
     carrier.locator('.d31request').filter(has_text='Склад самовывоза').locator('[data-bid]').click()
     field(carrier, 'bidForm', 'price', '90000')
     carrier.locator('#bidForm [name="acceptTerms"]').check()
-    carrier.get_by_role('button', name='Отправить водителю', exact=True).click()
+    carrier.get_by_role('button', name='Поставить экипаж в график', exact=True).click()
     expect(carrier.locator('#bidForm')).to_have_count(0)
     driver.bring_to_front()
     driver.get_by_role('button', name='Обновить', exact=True).click()
-    driver.locator('.d31request').filter(has_text='Склад самовывоза').locator('[data-driver-ok]').click()
     expect(driver.locator('.d31request').filter(has_text='Склад самовывоза').locator('[data-driver-ok]')).to_have_count(0)
     ship.bring_to_front()
     ship.get_by_role('button', name='Обновить', exact=True).click()
     ship.locator('.d31queue').filter(has_text='Склад самовывоза').get_by_role('button', name='Предложения').click()
     details = ship.get_by_role('dialog', name='Карточка рейса')
     expect(details.get_by_role('button', name='Назначить перевозчика')).to_have_count(0)
-    details.get_by_role('button', name='Добавить в пул', exact=True).click()
+    with ship.expect_response(lambda r:r.url.endswith('/approve')) as sent:
+        details.get_by_role('button', name='Пригласить перевозчика', exact=True).click()
+    assert sent.value.ok
+    close(ship)
+    accept(carrier)
+    ship.get_by_role('button',name='Обновить',exact=True).click()
+    ship.locator('.d31queue').filter(has_text='Склад самовывоза').get_by_role('button',name='Предложения').click()
     details.get_by_role('button', name='Назначить перевозчика', exact=True).click()
     ship.get_by_role('button', name='Назначить', exact=True).click()
     expect(ship.locator('[data-confirm]')).to_have_count(0)
@@ -163,77 +178,54 @@ def run_case(playwright,engine_name,viewport,case_name):
             recovery_codes['driver']=register(driver,base,'driver','driver@example.test','Водитель QA','')
             register(carrier2,base,'carrier','carrier2@example.test','Перевозчик второй','Перевозчик второй')
             # Both invitation directions go through visible forms and explicit consent.
-            invitation(carrier,'partner:shipper','shipper@example.test');accept(ship)
-            invitation(ship,'partner:carrier','carrier2@example.test');accept(carrier2)
+            invite_company(carrier,'Заказчик QA');accept(ship)
+            invite_company(ship,'Перевозчик второй');accept(carrier2)
             participants(ship)
-            expect(ship.get_by_role('dialog').get_by_text('Перевозчик QA',exact=True)).to_be_visible()
-            expect(ship.get_by_role('dialog').get_by_text('Перевозчик второй',exact=True)).to_be_visible()
+            expect(ship.locator('details summary').filter(has_text='Перевозчик QA')).to_be_visible()
+            expect(ship.locator('details summary').filter(has_text='Перевозчик второй')).to_be_visible()
             close(ship)
-            invitation(driver,'driver_join:carrier','carrier@example.test');accept(carrier)
-            driver.goto(base,wait_until='domcontentloaded')
-            driver.get_by_label('Электронная почта',exact=True).fill('driver@example.test')
-            driver.get_by_label('Пароль',exact=True).fill(PASSWORD)
-            driver.get_by_role('button',name='Войти',exact=True).click()
-            expect(driver.get_by_role('heading',name=HEADINGS['driver'],exact=True)).to_be_visible()
-            # A new employee creates their OWN password by the invitation link.
-            link=invitation(ship,'team:shipper','employee@example.test')
-            employee=new_page('employee');employee.goto(link,wait_until='domcontentloaded')
-            expect(employee.get_by_role('dialog',name='Регистрация пользователя',exact=True)).to_be_visible()
-            expect(employee.get_by_label('Название организации',exact=True)).to_be_hidden()
-            employee.get_by_label('Ваше имя',exact=True).fill('Сотрудник QA')
-            employee.get_by_label('Пароль (от 12 символов)',exact=True).fill(PASSWORD)
-            employee.get_by_role('button',name='Зарегистрироваться',exact=True).click()
-            expect(employee.get_by_role('dialog',name='Резервный код',exact=True)).to_be_visible()
-            employee.get_by_role('button',name='Я сохранил код',exact=True).click()
-            expect(employee.get_by_role('heading',name=HEADINGS['shipper'],exact=True)).to_be_visible()
-            participants(employee)
-            expect(employee.get_by_label('Кого добавить')).to_have_count(1)
-            expect(employee.locator('#participantType option[value="team:shipper"]')).to_have_count(0)
+            carrier.get_by_role('button',name='＋ Водитель',exact=True).click()
+            roster=carrier.locator('[data-dispatch-form="roster"]')
+            roster.locator('[name="name"]').fill('Водитель QA')
+            roster.locator('[name="email"]').fill('driver@example.test')
+            roster.locator('button[type=submit]').click()
+            expect(roster).to_have_count(0)
+            # The company administrator creates a named login directly.
+            ship.get_by_role('button',name='Сотрудники',exact=True).click()
+            ship.get_by_text('Добавить сотрудника',exact=True).click()
+            team=ship.locator('[data-form32="employee"]')
+            team.locator('[name=surname]').fill('Смирнов')
+            team.locator('[name=email]').fill('employee@example.test')
+            team.locator('[name=password]').fill(PASSWORD)
+            team.locator('button[type=submit]').click()
+            ship.get_by_role('button',name='Готово').click()
+            expect(ship.get_by_text('Смирнов',exact=True)).to_be_visible()
+            close(ship)
+            employee=new_page('employee');employee.goto(base)
+            employee.get_by_label('Электронная почта',exact=True).fill('employee@example.test')
+            employee.get_by_label('Пароль',exact=True).fill(PASSWORD)
+            employee.get_by_role('button',name='Войти',exact=True).click()
+            expect(employee.get_by_test_id('account-badge')).to_contain_text('Смирнов')
+            employee.get_by_role('button',name='Сотрудники',exact=True).click()
+            expect(employee.get_by_text('Добавить сотрудника',exact=True)).to_have_count(0)
             close(employee)
-            # Customer invites a driver separately from the driver's employment.
-            invitation(ship,'shipper_driver:driver','driver@example.test');accept(driver)
+            signup_driver_invite(ship,'driver@example.test');accept(driver)
+            signup_driver_invite(ship,'driver@example.test')
             participants(ship)
-            row=ship.locator('[data-invitation-row]').filter(has_text='driver@example.test')
-            expect(row).to_have_count(1)
-            invitation_id=row.get_attribute('data-invitation-row')
-            row.locator('textarea[name="body"]').fill('Личная заметка заказчика QA')
-            row.get_by_role('button',name='Сохранить комментарий',exact=True).click()
+            row=ship.locator('details[data-partner-row]').filter(has_text='Водитель QA')
+            expect(row).to_have_count(1);row.locator('summary').click()
+            row.locator('textarea').fill('Личная заметка заказчика QA')
+            row.get_by_role('button',name='Сохранить комментарий').click()
             expect(row.locator('[data-comment-status]')).to_have_text('Сохранено')
-            ship.get_by_label('Кого добавить',exact=True).select_option('shipper_driver:driver')
-            ship.get_by_label('Электронная почта участника',exact=True).fill('driver@example.test')
-            ship.get_by_role('button',name='Создать приглашение',exact=True).click()
-            expect(ship.locator('[data-invitation-row]').filter(has_text='driver@example.test')).to_have_count(1)
-            expect(ship.locator('[data-invitation-row="'+invitation_id+'"] textarea')).to_have_value('Личная заметка заказчика QA')
-            ship.locator('[data-invitation-row="'+invitation_id+'"] [data-archive-invite]').click()
-            expect(ship.locator('details summary')).to_contain_text('Архив приглашений')
-            ship.locator('details summary').click()
-            # Exercise a slow real restore after the user has already closed this dialog.
-            restore_path='/api/participants/invitations/'+invitation_id+'/restore'
-            # Delay delivery of the real HTTP response to the interface in every engine.
-            ship.evaluate("""path => {
-                const original = window.fetch;
-                let release;
-                const delayed = new Promise(resolve => { release = resolve; });
-                window.releaseRestore = () => { window.fetch = original; release(); };
-                window.fetch = async (...args) => {
-                    const response = await original.apply(window, args);
-                    if (new URL(response.url).pathname === path) await delayed;
-                    return response;
-                };
-            }""",restore_path)
-            with ship.expect_response(lambda response:response.url.endswith(restore_path)) as restored:
-                ship.locator('[data-invitation-row="'+invitation_id+'"] [data-restore-invite]').click()
-            assert restored.value.ok
+            close(ship);participants(ship)
+            row.locator('summary').click();expect(row.locator('textarea')).to_have_value('Личная заметка заказчика QA')
             close(ship)
-            ship.evaluate('window.releaseRestore()')
-            participants(carrier)
-            carrier.get_by_role('button',name='+ Машина',exact=True).click()
+            carrier.get_by_role('button',name='＋ Машина',exact=True).click()
             carrier.get_by_label('Обозначение машины',exact=True).fill('QA А001АА')
             carrier.get_by_label('Тип транспорта',exact=True).select_option(label='Фура')
             carrier.get_by_label('Грузоподъёмность, т',exact=True).fill('25')
             carrier.get_by_role('button',name='Добавить машину',exact=True).click()
-            expect(carrier.get_by_role('dialog',name='Участники').get_by_text('QA А001АА',exact=True)).to_be_visible()
-            close(carrier)
+            expect(carrier.locator('#vehicleForm')).to_have_count(0)
             # Full safe cargo dispatch from the newly registered accounts.
             ship.bring_to_front()
             ship.get_by_role('button',name='Новая заявка',exact=False).click()
@@ -252,16 +244,20 @@ def run_case(playwright,engine_name,viewport,case_name):
             carrier.locator('[data-bid]').first.click()
             field(carrier,'bidForm','price','90000')
             carrier.locator('#bidForm [name="acceptTerms"]').check()
-            carrier.get_by_role('button',name='Отправить водителю',exact=True).click()
+            carrier.get_by_role('button',name='Поставить экипаж в график',exact=True).click()
             expect(carrier.locator('#bidForm')).to_have_count(0)
             driver.bring_to_front()
             driver.get_by_role('button',name='Обновить',exact=True).click()
-            request=driver.locator('.d31request').filter(has_text='Тестовый город Б')
-            request.get_by_role('button',name='Предложить время',exact=True).click()
+            month=driver.locator('[data-month-grid]')
+            if day[:7]!=date.today().strftime('%Y-%m'):
+                driver.locator('[data-dispatch="monthNext"]').click()
+            expect(month).to_have_attribute('data-month-grid',day[:7])
+            driver.locator('[data-dispatch="driverDay"][data-id="'+day+'"]').click()
+            driver.locator('.d31job [data-dispatch="detail"]').first.click()
+            driver.get_by_role('button',name='Предложить время',exact=True).click()
             driver.get_by_label('Время подачи',exact=True).fill('08:45')
             driver.get_by_role('button',name='Отправить заказчику',exact=True).click()
             expect(driver.get_by_role('dialog')).to_have_count(0)
-            request.get_by_role('button',name='Подтверждаю рейс',exact=True).click()
             expect(driver.locator('[data-driver-ok]')).to_have_count(0)
             ship.bring_to_front()
             ship.get_by_role('button',name='Обновить',exact=True).click()
@@ -277,8 +273,6 @@ def run_case(playwright,engine_name,viewport,case_name):
             driver.bring_to_front()
             driver.get_by_role('button',name='Обновить',exact=True).click()
             until=driver.locator('[data-month-grid]')
-            if day[:7]!=date.today().strftime('%Y-%m'):
-                driver.locator('[data-dispatch="monthNext"]').click()
             expect(until).to_have_attribute('data-month-grid',day[:7])
             driver.locator('[data-dispatch="driverDay"][data-id="'+day+'"]').click()
             driver.locator('.d31job [data-dispatch="detail"]').first.click()
@@ -296,9 +290,17 @@ def run_case(playwright,engine_name,viewport,case_name):
             driver.locator('[data-dispatch="driverDay"][data-id="'+day+'"]').click()
             expect(driver.locator('.d31job').first).to_contain_text('08:45')
             driver.screenshot(path=str(ARTIFACTS/f'{case_name}-active-calendar.png'),full_page=True)
-            # Price is filtered by the real API, rather than hidden in the page.
+            # The driver can edit the winning trip; losing competitors' bids stay confidential.
             ds=driver.request.get(base+'/api/state').json()
-            assert all(offer['price']==0 for offer in ds['offers'])
+            assert ds['orders'][0]['canEdit']
+            driver.locator('.d31job [data-dispatch="detail"]').first.click()
+            driver.get_by_role('button',name='Редактировать',exact=True).click()
+            editor=driver.locator('[data-form32="edit"]')
+            editor.locator('[name=budget]').fill('87000')
+            editor.locator('button[type=submit]').click()
+            expect(driver.get_by_role('dialog',name='Карточка рейса')).to_be_visible()
+            expect(driver.get_by_role('dialog').locator('del.first32')).to_be_visible()
+            close(driver)
             ship.bring_to_front()
             ship.locator('.d31queue [data-dispatch="detail"]').first.click()
             ship.locator('[data-complete]').first.click()
@@ -316,8 +318,9 @@ def run_case(playwright,engine_name,viewport,case_name):
             # Removal changes the relevant pool, preserving the driver's login.
             participants(ship)
             ship.on('dialog',lambda dialog:dialog.accept())
-            ship.locator('[data-driver-pool-row] [data-remove-invited-driver]').click()
-            expect(ship.locator('[data-driver-pool-row]')).to_have_count(0)
+            row=ship.locator('details[data-partner-row]').filter(has_text='Водитель QA')
+            row.locator('summary').click();row.get_by_role('button',name='Удалить партнёра').click()
+            expect(row).to_have_count(0)
             close(ship)
             for key in ('shipper','carrier','driver'):
                 page=pages[key]
@@ -347,11 +350,11 @@ def run_case(playwright,engine_name,viewport,case_name):
                 expect(page.get_by_test_id('account-badge')).to_contain_text(key+'@example.test')
             assert not errors,errors
             return {'case':case_name,'engine':engine_name,'viewport':viewport,'passed':True,
-                    'checks':['registration 3 roles with INN','driver monthly calendar and leave','driver counteroffer and shipper queue decision','shipper adds carrier','carrier adds shipper','driver joins carrier',
-                              'employee registers by link','vehicle creation','order-driver-selection-completion','driver price privacy',
-                              'customer invites driver','persistent single invitation','archive/restore invitations','private participant comments',
+                    'checks':['registration 3 roles with INN','driver monthly calendar and leave','driver counteroffer and shipper queue decision','shipper adds carrier','carrier adds shipper','carrier directly adds driver',
+                              'employee personal login','vehicle creation','order-driver-selection-completion','driver edits shared price; original retained',
+                              'customer invites driver','persistent single invitation','private participant comments',
                               'remove driver from pool','account identity each role','audio graph and loud test tone','password recovery 3 roles',
-                              'self-collection without delivery details','external carrier approval and assignment','completed order summary matches actual status','logout','no JS errors','no horizontal overflow']}
+                              'self-collection without delivery details','bilateral external partnership and assignment','completed order summary matches actual status','logout','no JS errors','no horizontal overflow']}
         except Exception:
             for key,page in pages.items():
                 try:

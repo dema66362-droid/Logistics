@@ -93,7 +93,7 @@ def test_team_registration_and_no_privilege_escalation(accounts,company_role,emp
     if employee_role=='driver':
         assert len(state(owner)['drivers'])==1
         assert member.get('/api/participants').json()['team']==[]
-    assert post(member,'/api/carrier/vehicles',dict(label='Новая машина',kind='Фура',capacity=25)).status_code==403
+    assert post(member,'/api/carrier/vehicles',dict(label='Новая машина',kind='Фура',capacity=25)).status_code==(201 if employee_role=='carrier' else 403)
     member_id=state(member)['user']['id']
     assert post(owner,f'/api/participants/team/{member_id}/deactivate').status_code==200
     assert member.get('/api/state').status_code==401

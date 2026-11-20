@@ -17,8 +17,8 @@ from pathlib import Path
 from sqlalchemy import func, select, text
 from app import Base, db_write, engine
 
-EXCLUDED = {'web_sessions', 'login_throttles', 'push_subscriptions', 'push_deliveries'}
-ADDITIVE_TABLES = {'participant_invitations','shipper_drivers','participant_comments','recovery_codes','dispatch_recipients','carrier_roster','internal_trips','slot_proposals','driver_leave'}
+EXCLUDED = {'web_sessions', 'login_throttles', 'push_subscriptions', 'push_deliveries', 'site_admin_sessions'}
+ADDITIVE_TABLES = {'participant_invitations','shipper_drivers','participant_comments','recovery_codes','dispatch_recipients','carrier_roster','internal_trips','slot_proposals','driver_leave','inn_restrictions','fleet_grants','driver_fleet_grants','carrier_costs','company_peers','road_distances','vehicle_positions'}
 
 
 def tables():
@@ -73,17 +73,25 @@ def restore(path: Path, *, confirm_empty: bool):
         columns = set(table.columns.keys())
         if table.name == 'users':
             for row in snapshot['tables']['users']:
-                if set(row) == columns - {'is_admin'}:
+                row.setdefault('surname','')
+                if 'is_admin' not in row:
                     row['is_admin'] = row['role'] in ('shipper', 'carrier')
         if table.name=='organizations':
-            for row in snapshot['tables'][table.name]:row.setdefault('inn', None)
+            for row in snapshot['tables'][table.name]:
+                row.setdefault('inn',None);row.setdefault('directory_key',row['name'].casefold().replace('ё','е'));row.setdefault('disposition','active')
         if table.name=='shipments':
             for row in snapshot['tables'][table.name]:
                 bid=historical_offers.get(row.get('selected_offer_id')) or {}
                 row.setdefault('slot_day',bid.get('pickup_date'))
                 row.setdefault('slot_time',bid.get('pickup_time'))
+                row.setdefault('creator_id',None);row.setdefault('creator_name',row.get('manager',''))
+                row.setdefault('first_price',row.get('budget') or bid.get('price'));row.setdefault('revision',1)
+                row.setdefault('price_revised',bool(bid and row['first_price']!=bid.get('price')))
+                row.setdefault('delete_after',None)
                 row.setdefault('pickup_company','')
                 row.setdefault('pickup_contact','')
+        if table.name=='slot_proposals':
+            for row in snapshot['tables'][table.name]:row.setdefault('new_unload',None)
         if table.name=='offers':
             for row in snapshot['tables'][table.name]:row.setdefault('delivery_day',None)
         if table.name == 'notifications':
