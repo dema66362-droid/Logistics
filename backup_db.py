@@ -17,8 +17,8 @@ from pathlib import Path
 from sqlalchemy import func, select, text
 from app import Base, db_write, engine
 
-EXCLUDED = {'web_sessions', 'login_throttles', 'push_subscriptions', 'push_deliveries', 'site_admin_sessions'}
-ADDITIVE_TABLES = {'participant_invitations','shipper_drivers','participant_comments','recovery_codes','dispatch_recipients','carrier_roster','internal_trips','slot_proposals','driver_leave','inn_restrictions','fleet_grants','driver_fleet_grants','carrier_costs','company_peers','road_distances','vehicle_positions'}
+EXCLUDED = {'web_sessions', 'login_throttles', 'push_subscriptions', 'push_deliveries', 'site_admin_sessions', 'site_operator_accounts'}
+ADDITIVE_TABLES = {'participant_invitations','shipper_drivers','participant_comments','recovery_codes','dispatch_recipients','carrier_roster','internal_trips','slot_proposals','driver_leave','inn_restrictions','fleet_grants','driver_fleet_grants','carrier_costs','company_peers','road_distances','vehicle_positions','invitation_link_copies','site_moderation_history'}
 
 
 def tables():
