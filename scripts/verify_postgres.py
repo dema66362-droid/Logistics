@@ -96,7 +96,6 @@ def run():
                 'pickup': order['time'], 'end_date': order['unload'], 'price': 95000 + index * 1000,
                 'accept_terms': True}), 201, 'create proposal')
             quotes.append(int(quote['id'].split('-')[1]))
-            check(post(drivers[index], f'/api/offers/{quotes[-1]}/driver-response?accepted=true'), 200, 'driver confirms')
             assert len(carrier[0].get('/api/state').json()['offers']) == 1
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda item: post(item[0], f'/api/offers/{item[1]}/accept'), zip((ship, ship2), quotes)))
@@ -115,17 +114,15 @@ def run():
                 'budget': 90000, 'terms': 'Учебные условия', 'pickup_address': 'Условная площадка 1',
                 'delivery_address': 'Условный склад 2', 'recipient_contact': 'Вымышленный контакт'}), 201, 'new order')
             refs.append(result['id']); check(post(ship, f"/api/orders/{refs[-1]}/search", {'public_external': False}), 200, 'search')
-        fleet = carriers[0][0].get('/api/state').json(); held = []
-        for ref in refs:
-            quote = check(post(carriers[0], '/api/offers', {'order_ref': ref,
-                'driver_id': fleet['drivers'][0]['id'], 'vehicle_id': fleet['vehicles'][0]['id'],
-                'day': day, 'end_date': day, 'pickup': '10:00', 'price': 95000, 'accept_terms': True}), 201, 'pending bid')
-            held.append(int(quote['id'].split('-')[1]))
-        other_driver_session = actor(ACCOUNTS[2][0], 1)
+        fleet=carriers[0][0].get('/api/state').json()
+        other_carrier_session=actor(ACCOUNTS[1][0],1)
+        def reserve(item):
+            session,ref=item
+            return post(session,'/api/offers',{'order_ref':ref,'driver_id':fleet['drivers'][0]['id'],
+                'vehicle_id':fleet['vehicles'][0]['id'],'day':day,'end_date':day,'pickup':'10:00','price':95000,'accept_terms':True})
         with ThreadPoolExecutor(max_workers=2) as pool:
-            responses = list(pool.map(lambda item: post(item[0], f'/api/offers/{item[1]}/driver-response?accepted=true'),
-                                      zip((drivers[0], other_driver_session), held)))
-        assert sorted(response.status_code for response in responses) == [200, 409]
+            responses=list(pool.map(reserve,zip((carriers[0],other_carrier_session),refs)))
+        assert sorted(response.status_code for response in responses)==[201,409]
 
         # Login attempts survive changes of worker and successful unrelated logins.
         guest = httpx.Client(base_url=bases[0], timeout=20,trust_env=False); clients.append(guest)

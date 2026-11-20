@@ -41,10 +41,9 @@ with tempfile.TemporaryDirectory() as tmp:
   vehicle=post(car,'/api/carrier/vehicles',dict(label='Учебная фура',kind='Фура',capacity=24))
   qb=post(car,'/api/offers',dict(order_ref=ref,driver_id=person['id'],vehicle_id=vehicle['id'],day=day,pickup='11:15',end_date=day,price=90000,accept_terms=True))['id'][2:]
   def plan(c):r=c.get('/api/plan',params={'week':day});r.raise_for_status();return r.json()
-  for c in [car,driver]:assert plan(c)['drivers'][0]['jobs'][0]['offer']['status']=='waiting_driver'
+  for c in [car,driver]:assert plan(c)['drivers'][0]['jobs'][0]['offer']['status']=='driver_ok'
   stop(server);server=start()
-  for c in [car,driver]:assert plan(c)['drivers'][0]['jobs'][0]['offer']['status']=='waiting_driver'
-  post(driver,'/api/offers/'+qb+'/driver-response?accepted=true')
+  for c in [car,driver]:assert plan(c)['drivers'][0]['jobs'][0]['offer']['status']=='driver_ok'
   proposal=state(ship)['orders'][0]['slotProposals'][0]
   post(ship,f'/api/orders/{ref}/slot/'+str(proposal['id']),{'accepted':True})
   post(ship,'/api/offers/'+qb+'/accept')
@@ -53,7 +52,7 @@ with tempfile.TemporaryDirectory() as tmp:
   assert state(driver)['orders'][0]['pickupContact']=='Контакт А' and plan(car)['drivers'][0]['jobs'][0]['confirmed']
   post(ship,f'/api/orders/{ref}/complete')
   assert all(state(c)['orders'][0]['status']=='completed' for c in clients)
-  print('PASS: 3 registered HTTP clients, addressed inbox without vehicle, direct roster, confirmation, server restart with persistent sessions and plans, synchronized 11:15, completion for all 3 accounts')
+  print('PASS: 3 registered HTTP clients, addressed inbox without vehicle, direct roster, automatic reservations, server restart with persistent sessions and plans, synchronized 11:15, completion for all 3 accounts')
  finally:
   for c in clients:c.close()
   stop(server)
