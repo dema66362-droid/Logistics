@@ -157,3 +157,19 @@ def test_global_operator_block_revoke_unblock_and_delete(accounts,monkeypatch):
         assert client.post(path,json={'inn':'0000000018','action':action},headers=csrf).status_code==200
         assert ship.post('/api/login',json={'email':'shipper@example.test','password':PASSWORD}).status_code==(200 if action=='unblock' else 401)
     assert client.post(path,json={'inn':'0000000018','action':'unblock'},headers=csrf).status_code==409
+
+
+def test_crossed_invitations_keep_one_request_and_previous_terms_need_new_offer(accounts):
+    ship,car,driver=accounts('shipper'),accounts('carrier'),accounts('driver')
+    carid=state(car)['user']['org_id'];shipid=state(ship)['user']['org_id']
+    outgoing=post(ship,'/api/partners/invite',{'company_id':carid}).json()
+    reverse=post(car,'/api/partners/invite',{'company_id':shipid}).json()
+    assert reverse['alreadyExists'] and reverse['id']==outgoing['id']
+    assert len(car.get('/api/partners').json()['invitations'])==1
+    assert respond(car,outgoing).status_code==200
+    person=members(car,'Водитель','driver@example.test');vid=vehicle(car)
+    ref,day=new_order(ship);assert publish(ship,ref,car).status_code==200
+    q=create_bid(car,ref,person['id'],vid,day,time='09:00').json()['id'][2:]
+    assert change(ship,ref,terms='Новые условия погрузки').status_code==200
+    assert post(ship,'/api/offers/'+q+'/accept').status_code==409
+    assert create_bid(car,ref,person['id'],vid,day,time='09:00').status_code==201
