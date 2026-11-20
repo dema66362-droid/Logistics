@@ -38,7 +38,7 @@ if DB_URL.startswith('postgres://'):
 # SQLAlchemy 2.1 defaults to psycopg 3; this release installs psycopg2.
 if DB_URL.startswith('postgresql://'):
     DB_URL = 'postgresql+psycopg2://' + DB_URL[len('postgresql://'):]
-VERSION = '3.2.0'
+VERSION = '3.3.0'
 BUSINESS_TZ = ZoneInfo(os.environ.get('LOGISTIK_TIMEZONE', 'Europe/Moscow'))
 
 def business_today():
@@ -116,6 +116,12 @@ class ParticipantInvitation(Base):
     expires: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     sender_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     recipient_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class InvitationLinkCopy(Base):
+    __tablename__ = 'invitation_link_copies'
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    invitation_id: Mapped[int] = mapped_column(ForeignKey('participant_invitations.id'), index=True)
+    expires: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 class ShipperDriver(Base):
     __tablename__ = 'shipper_drivers'
@@ -317,6 +323,21 @@ class InnRestriction(Base):
     state: Mapped[str] = mapped_column(String(12))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
+class OperatorAccount(Base):
+    __tablename__ = 'site_operator_accounts'
+    login: Mapped[str] = mapped_column(String(100), primary_key=True)
+    password_hash: Mapped[str] = mapped_column(String(200))
+    used_setup_hash: Mapped[str] = mapped_column(String(64))
+
+class ModerationEvent(Base):
+    __tablename__ = 'site_moderation_history'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    inn: Mapped[str] = mapped_column(String(12), index=True)
+    actor: Mapped[str] = mapped_column(String(100))
+    before: Mapped[str] = mapped_column(String(12))
+    after: Mapped[str] = mapped_column(String(12))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class AdminSession(Base):
     __tablename__='site_admin_sessions'
     token_hash: Mapped[str] = mapped_column(String(64),primary_key=True)
@@ -400,7 +421,7 @@ def initialize_schema():
             conn.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': PILOT_WRITE_LOCK})
         Base.metadata.create_all(conn)
         latest = conn.scalar(select(func.max(SchemaMigration.version)))
-        if latest and latest > '0032':
+        if latest and latest > '0033':
             raise RuntimeError('Database schema is newer than this application release')
         for table, definitions in {
             'organizations': {'inn':'VARCHAR(12)','directory_key':"VARCHAR(180) NOT NULL DEFAULT ''",'disposition':"VARCHAR(12) NOT NULL DEFAULT 'active'"},
@@ -460,6 +481,8 @@ def initialize_schema():
             conn.execute(text("""UPDATE shipments SET price_revised=TRUE WHERE selected_offer_id IS NOT NULL
                 AND first_price<>(SELECT price FROM offers WHERE id=shipments.selected_offer_id)"""))
             conn.execute(SchemaMigration.__table__.insert().values(version='0032',applied_at=datetime.now(timezone.utc)))
+        if not conn.scalar(select(SchemaMigration.version).where(SchemaMigration.version=='0033')):
+            conn.execute(SchemaMigration.__table__.insert().values(version='0033',applied_at=datetime.now(timezone.utc)))
         conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_shipments_delete_after ON shipments(delete_after)')
         conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_org_directory_inn ON organizations(inn)')
         conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_notes_order_kind ON notifications(shipment_id,kind)')
@@ -891,7 +914,9 @@ def dashboard_state(user,period=None):
                 item.update(price_fields(s,db))
             item['slotProposals']=proposals.get(s.id,[])
             if user['role']=='carrier':
-                item['addressed']=db.get(DispatchRecipient,(s.id,user['org_id'])) is not None
+                recipient=db.get(DispatchRecipient,(s.id,user['org_id']))
+                item['addressed']=recipient is not None
+                item['reviewSeen']=bool(recipient and recipient.review_seen)
             if s.hazardous:
                 item['reviewOnly']=bool(dispatch_targets(db,s.id)) and not s.search_launched
             if user['role']=='shipper':
@@ -1312,6 +1337,7 @@ class CreateOffer(BaseModel):
     delivery_day:date | None = None
     price:int=Field(ge=1000,le=50_000_000)
     accept_terms: bool = False
+    terms_version: int = Field(default=1,ge=1)
 
 
 def intersects(a1:date,a2:date,b1:date,b2:date):
@@ -1342,6 +1368,8 @@ def create_offer(payload:CreateOffer,request:Request,user=Depends(user_session))
         if s.status not in ('search','choice'):invalid('Заявка закрыта для предложений')
         if s.hazardous:invalid('Для опасного груза назначение заблокировано до внедрения проверки допусков')
         if not s.search_launched:invalid('Заказчик ещё не запустил поиск машины')
+        if payload.terms_version != s.terms_version:
+            invalid('Заказчик изменил условия. Откройте предложение заново и прочитайте новую редакцию.',409)
         if not payload.accept_terms or not s.terms.strip(): invalid('Необходимо согласие с требованиями заказчика',422)
         existing=db.scalar(select(Offer).where(Offer.shipment_id==s.id,Offer.carrier_id==user['org_id'],Offer.status.in_(['waiting_driver','driver_ok','selected'])))
         if existing:invalid('Ваша организация уже подала предложение по заявке')
@@ -1991,7 +2019,7 @@ def register_account(payload:Signup,request:Request,response:Response):
         if db.scalar(select(User.id).where(User.email==email)): invalid('Этот адрес уже зарегистрирован. Войдите в свой кабинет')
         inv=None
         if payload.invitation_token:
-            inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==sha_token(payload.invitation_token)))
+            inv=invitation_by_token(db,payload.invitation_token)
             check_invitation(inv)
             if inv.target_user_id is not None: invalid('Участник уже зарегистрирован. Войдите для принятия приглашения')
             if inv.target_email!=email or inv.target_role!=payload.role: forbidden('Почта или роль не совпадает с приглашением')
@@ -2173,7 +2201,7 @@ def respond_invitation(invitation_id:int,payload:InvitationDecision,request:Requ
         # Email alone cannot claim an invitation created before the account existed.
         company_target=corporate_recipient(db,inv,user)
         if inv.target_user_id!=user['id'] and not company_target:
-            if inv.target_user_id is not None or not payload.token or not hmac.compare_digest(inv.token_hash,sha_token(payload.token)):
+            if inv.target_user_id is not None or not payload.token or invitation_by_token(db,payload.token) is not inv:
                 forbidden('Откройте персональную ссылку приглашения')
         recipient=company_target or db.get(User,user['id'])
         if recipient.email!=inv.target_email or recipient.role!=inv.target_role: forbidden('Это приглашение другому участнику')
@@ -2191,6 +2219,30 @@ def cancel_invitation(invitation_id:int,request:Request,user=Depends(user_sessio
         check_invitation(inv);inv.status='cancelled';inv.responded_at=datetime.now(timezone.utc)
     return {'ok':True}
 
+def invitation_by_token(db, token):
+    digest=sha_token(token)
+    original=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==digest))
+    if original:
+        return original
+    copied=db.get(InvitationLinkCopy,digest)
+    if copied and copied.expires.replace(tzinfo=timezone.utc)>datetime.now(timezone.utc):
+        return db.get(ParticipantInvitation,copied.invitation_id)
+    return None
+
+@app.post('/api/participants/invitations/{invitation_id}/link')
+def copy_invitation_link(invitation_id:int,request:Request,user=Depends(user_session)):
+    protect_csrf(request,user['csrf'])
+    consume_action('invite-copy:'+str(user['id']),30)
+    raw=secrets.token_urlsafe(40)
+    with db_write() as db:
+        inv=db.get(ParticipantInvitation,invitation_id)
+        if not inv or not manages_invitation(inv,user):
+            raise HTTPException(404,detail='Приглашение не найдено')
+        check_invitation(inv)
+        db.execute(delete(InvitationLinkCopy).where(InvitationLinkCopy.expires<=datetime.now(timezone.utc)))
+        db.add(InvitationLinkCopy(token_hash=sha_token(raw),invitation_id=inv.id,expires=inv.expires))
+    return {'link':str(request.base_url).rstrip('/')+'/#invite='+raw,'emailSent':False}
+
 @app.post('/api/participants/invitations/{invitation_id}/renew')
 def renew_invitation(invitation_id:int,request:Request,user=Depends(user_session)):
     protect_csrf(request,user['csrf']);consume_action('invite:'+str(user['id']),30)
@@ -2200,6 +2252,7 @@ def renew_invitation(invitation_id:int,request:Request,user=Depends(user_session
         if not inv or not manages_invitation(inv,user): raise HTTPException(404,detail='Приглашение не найдено')
         if inv.status=='accepted' and invitation_connected(db,inv):invalid('Участник уже подключён')
         inv.status='pending';inv.responded_at=None;inv.sender_archived=False;inv.recipient_archived=False
+        db.execute(delete(InvitationLinkCopy).where(InvitationLinkCopy.invitation_id==inv.id))
         inv.token_hash=sha_token(raw);inv.expires=datetime.now(timezone.utc)+timedelta(days=7)
     return {'link':str(request.base_url).rstrip('/')+'/#invite='+raw,'emailSent':False}
 
@@ -2211,7 +2264,7 @@ def resolve_invitation(payload:ResolveInvitation,request:Request):
     same_origin(request)
     consume_action('invite-info:'+(request.client.host if request.client else 'unknown'),120,5)
     with SessionLocal() as db:
-        inv=db.scalar(select(ParticipantInvitation).where(ParticipantInvitation.token_hash==sha_token(payload.token)))
+        inv=invitation_by_token(db,payload.token)
         check_invitation(inv)
         return {**invitation_dict(db,inv,False),'registered':inv.target_user_id is not None}
 

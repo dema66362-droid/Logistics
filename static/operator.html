@@ -1,14 +1,83 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Администратор · Логистик</title><style>
-*{box-sizing:border-box}body{font:16px system-ui,sans-serif;background:#f4f6fa;color:#19243b;margin:0;padding:5vh 16px}main{max-width:570px;margin:auto;background:white;padding:clamp(20px,5vw,40px);border:1px solid #dde3ed;border-radius:20px}h1{font-size:26px}label{display:grid;gap:5px;margin:14px 0}input,button{font:inherit;border:1px solid #cbd3de;border-radius:8px;padding:10px}button{background:#eef3fb;color:#173867;cursor:pointer}button[type=submit]{background:#2456c8;color:white}#status{color:#8a2939}p{line-height:1.5}#actions{display:flex;gap:7px;flex-wrap:wrap}[hidden]{display:none!important}small{color:#576579}
-</style></head><body><main><a href="/">Логистик</a><h1>Администратор сайта</h1><form id="login"><label>Логин<input name="login" required autocomplete="username"></label><label>Пароль<input type="password" name="password" required autocomplete="current-password"></label><button type="submit">Войти</button></form><section id="panel" hidden><form id="lookup"><label>ИНН компании<input name="inn" inputmode="numeric" pattern="([0-9]{10}|[0-9]{12})" maxlength="12" required></label><button type="submit">Найти компанию</button></form><div id="result"></div><div id="actions" hidden><button data-action="block">Заблокировать</button><button data-action="unblock">Разблокировать</button><button data-action="delete">Удалить участника</button></div><p><button id="logout">Выйти</button></p></section><p id="status" role="status"></p></main>
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Администратор · Логистик</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#1b2940;font:16px/1.45 system-ui,sans-serif}main{max-width:850px;margin:3vh auto;padding:16px}header,.bar,.actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}header{margin-bottom:20px}a{color:#194fb1}h1{font-size:clamp(25px,5vw,34px);margin:5px 0}h2{font-size:19px;margin:0 0 12px}p{margin:8px 0}.card{border:1px solid #dbe2ed;background:white;border-radius:14px;padding:clamp(15px,4vw,26px);margin:12px 0}.login-card{max-width:490px}label{display:grid;gap:5px;font-weight:550;margin:10px 0}input,button{font:inherit;border:1px solid #bcc9dc;border-radius:8px;padding:10px 13px}input{min-width:0;width:100%}button{background:white;color:#213753;cursor:pointer}button:disabled{opacity:.55;cursor:default}.primary{background:#2256c6;color:white;border-color:#2256c6}button[data-action=delete]{color:#a02c3b;margin-inline-start:auto}small,.muted{color:#53657d}.actions{justify-content:flex-start;margin-top:14px}.badge{display:inline-block;border-radius:20px;background:#edf2f9;padding:3px 10px;font-size:14px}.badge.active{color:#145a41;background:#eaf6ef}.badge.blocked,.badge.deleted{color:#8b2133;background:#fff0f1}.company{border-top:1px solid #dce4ef;padding-top:12px;margin-top:16px}#status{color:#922c40}#status:empty{display:none}ol{padding:0;list-style:none}li{padding:10px 0;border-bottom:1px solid #e2e7f0}li small{display:block}#lookup{max-width:490px}[hidden]{display:none!important}:focus-visible{outline:3px solid #4377d7;outline-offset:2px}@media(max-width:520px){main{padding:12px}button[data-action=delete]{margin-inline-start:0}.actions button{min-height:44px}}
+</style></head><body><main>
+<header><div><a href="/">Логистик</a><h1>Администратор сайта</h1></div><div id="identity" hidden><span class="badge" id="actor"></span> <button id="logout">Выйти</button></div></header>
+<form class="card login-card" id="login"><label>Логин<input name="login" required autocomplete="username"></label><label>Пароль<input type="password" name="password" required autocomplete="current-password"></label><button class="primary">Войти</button></form>
+<form class="card login-card" id="setup" hidden><h2>Задайте личный пароль</h2><label>Новый пароль<input type="password" name="new_password" required minlength="12" maxlength="128" autocomplete="new-password"></label><small>Минимум 12 символов.</small><label>Повторите пароль<input type="password" name="repeat" required autocomplete="new-password"></label><div class="actions"><button class="primary">Сохранить и войти</button><button type="button" id="back">Назад</button></div></form>
+<section id="panel" hidden><section class="card"><h2>Доступ компаний</h2><form id="lookup"><label>ИНН компании<input name="inn" inputmode="numeric" pattern="([0-9]{10}|[0-9]{12})" maxlength="12" required></label><div class="actions"><button class="primary">Найти компанию</button><button id="clear" type="button">Очистить</button></div></form><div id="result" aria-live="polite"></div><div id="actions" class="actions" hidden><button data-action="block">Заблокировать</button><button data-action="unblock">Разблокировать</button><button data-action="delete">Удалить участника</button></div></section>
+<section class="card"><div class="bar"><h2>Последние действия</h2><button id="refresh">Обновить историю</button></div><ol id="history"></ol></section></section><p role="status" id="status" aria-live="polite"></p></main>
 <script>
-const by=id=>document.getElementById(id);let csrf='',current='';
-async function api(path,body){const opt={credentials:'same-origin',headers:{'X-CSRF-Token':csrf}};if(body){opt.method='POST';opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body)}const r=await fetch('/api/site-admin/'+path,opt),data=await r.json();if(!r.ok)throw Error(data.detail||'Ошибка');return data}
-function display(token){csrf=token;by('login').hidden=!!token;by('panel').hidden=!token}
-const names={active:'действует',blocked:'заблокирован',deleted:'удалён',shipper:'заказчик',carrier:'перевозчик'};
-async function find(){const r=await api('company?inn='+encodeURIComponent(by('lookup').elements.inn.value));current=r.inn;by('result').replaceChildren();for(const o of r.companies){const p=document.createElement('p');p.textContent=o.name+' · '+names[o.role]+' · '+names[o.state];by('result').append(p)}by('status').textContent=r.companies.length?'':'Компания не найдена';by('actions').hidden=!r.companies.length||r.restriction==='deleted';for(const b of by('actions').children)b.hidden=(b.dataset.action==='block'&&r.restriction==='blocked')||(b.dataset.action==='unblock'&&r.restriction!=='blocked')}
-document.addEventListener('submit',async e=>{e.preventDefault();by('status').textContent='';try{if(e.target.id==='login'){const result=await api('login',Object.fromEntries(new FormData(e.target)));e.target.reset();display(result.csrf)}else await find()}catch(err){by('status').textContent=err.message}});
-by('lookup').elements.inn.addEventListener('input',()=>{current='';by('actions').hidden=true;by('result').replaceChildren()});
-document.addEventListener('click',async e=>{const a=e.target.dataset.action;try{if(a&&current){const label=e.target.textContent;if(!confirm(label+' по ИНН '+current+'?'+(a==='delete'?' Доступ всех сотрудников закроется. История рейсов партнёров сохранится.':'')))return;await api('company',{inn:current,action:a});await find()}if(e.target.id==='logout'){await api('logout',{});location.reload()}}catch(err){by('status').textContent=err.message}});
-api('session').then(r=>display(r.csrf)).catch(()=>{});
+'use strict';
+const by=id=>document.getElementById(id);
+const states={active:'Доступ открыт',blocked:'Заблокирован',deleted:'Удалён'};
+const roles={shipper:'Заказчик',carrier:'Перевозчик'};
+let csrf='',selected=null,lookupVersion=0,historyVersion=0,initial=null;
+function clearCompany(){lookupVersion++;selected=null;by('result').replaceChildren();by('actions').hidden=true;by('status').textContent=''}
+function display(token='',login=''){
+    csrf=token;initial=null;clearCompany();historyVersion++;by('history').replaceChildren();
+    by('lookup').reset();by('login').reset();by('setup').reset();by('setup').hidden=true;
+    by('panel').hidden=by('identity').hidden=!token;by('login').hidden=!!token;by('actor').textContent=login;
+}
+async function api(path,body){
+    const options={credentials:'same-origin',headers:{'X-CSRF-Token':csrf}};
+    if(body){options.method='POST';options.headers['Content-Type']='application/json';options.body=JSON.stringify(body)}
+    const response=await fetch('/api/site-admin/'+path,options),value=await response.json();
+    if(!response.ok){if(response.status===401&&csrf)display();throw Error(typeof value.detail==='string'?value.detail:'Проверьте введённые данные')}
+    return value;
+}
+function append(parent,tag,text,style=''){const el=document.createElement(tag);el.textContent=text;if(style)el.className=style;parent.append(el);return el}
+async function history(){
+    const version=++historyVersion,data=await api('history');
+    if(!csrf||version!==historyVersion)return;
+    const list=by('history');list.replaceChildren();
+    for(const row of data){const li=append(list,'li','');append(li,'b','ИНН '+row.inn+' · '+states[row.after]);
+        append(li,'small',new Date(row.at).toLocaleString('ru-RU')+' · '+row.actor+' · '+states[row.before]+' → '+states[row.after]);}
+    if(!data.length)append(list,'li','Действий пока нет.','muted');
+}
+async function find(){
+    clearCompany();const version=lookupVersion,inn=by('lookup').elements.inn.value;
+    let data;try{data=await api('company?inn='+encodeURIComponent(inn))}catch(error){if(version===lookupVersion)throw error;return}
+    if(version!==lookupVersion||!csrf||inn!==by('lookup').elements.inn.value)return;
+    if(!data.companies.length){by('status').textContent='Компания не найдена';return}
+    selected=data;
+    for(const org of data.companies){const box=append(by('result'),'div','','company');append(box,'b',org.name+' · '+(roles[org.role]||org.role));append(box,'p','ИНН '+data.inn);append(box,'span',states[org.state],'badge '+org.state)}
+    by('actions').hidden=data.restriction==='deleted';
+    for(const button of by('actions').children)button.hidden=button.dataset.action==='block'&&data.restriction==='blocked'||button.dataset.action==='unblock'&&data.restriction!=='blocked';
+}
+async function enter(data){display(data.csrf,data.login);by('lookup').elements.inn.focus();await history()}
+document.addEventListener('submit',async event=>{
+    event.preventDefault();const form=event.target,button=event.submitter||form.querySelector('button');
+    if(button.disabled)return;button.disabled=true;by('status').textContent='';
+    try{
+        if(form.id==='login'){
+            const credentials=Object.fromEntries(new FormData(form)),r=await api('login',credentials);
+            if(r.choosePassword){initial=credentials;form.reset();form.hidden=true;by('setup').hidden=false;by('setup').elements.new_password.focus()}
+            else await enter(r);
+        }else if(form.id==='setup'){
+            if(form.elements.new_password.value!==form.elements.repeat.value)throw Error('Пароли не совпадают');
+            await enter(await api('setup',{...initial,new_password:form.elements.new_password.value}));
+        }else await find();
+    }catch(err){by('status').textContent=err.message}finally{button.disabled=false}
+});
+by('lookup').elements.inn.addEventListener('input',clearCompany);
+by('clear').onclick=()=>{by('lookup').reset();clearCompany();by('lookup').elements.inn.focus()};
+by('back').onclick=()=>{display();by('login').elements.login.focus()};
+document.addEventListener('click',async event=>{
+    const button=event.target.closest('button'),action=button?.dataset.action;
+    if(!button||!action&&!['logout','refresh'].includes(button.id))return;
+    button.disabled=true;
+    try{
+        if(button.id==='logout'){await api('logout',{});display();by('login').elements.login.focus();return}
+        if(button.id==='refresh'){await history();return}
+        const company=selected;
+        if(!company||company.inn!==by('lookup').elements.inn.value)return;
+        const label=button.textContent,names=company.companies.map(row=>row.name).join(', ');
+        if(!confirm(label+' — '+names+' (ИНН '+company.inn+')?'+(action==='delete'?' Доступ компании и сотрудников закроется окончательно. История рейсов сохранится.':'')))return;
+        await api('company',{inn:company.inn,action,expected:company.restriction});
+        if(company===selected)await find();await history();
+    }catch(err){by('status').textContent=err.message}finally{button.disabled=false}
+});
+api('session').then(enter).catch(()=>{});
 </script></body></html>

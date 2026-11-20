@@ -32,7 +32,7 @@ function directory32(data){
         if(state.user.role==='carrier'&&(p.role!=='driver'||p.canReceive))buttons+=action32(p.shared?'Закрыть мой график':'Открыть мой график','share',i);
         if(p.canViewFleet)buttons+=action32('График машин','shared',p.id);
         if(state.user.role==='carrier'&&p.role==='driver'&&!p.canReceive)buttons+=button31('Подключить кабинет','rosterContact',p.id);
-        return `<details class="partner32" data-partner-row="${Number(p.id)}"><summary>${esc(p.name)} <small>${esc(roleTitle(p.role||'driver'))}</small></summary>${p.inn?`<p>ИНН ${esc(p.inn)}</p>`:''}${controls32(buttons)}${participantNote29(p)}</details>`;
+        return `<details class="partner32" data-partner-row="${Number(p.id)}" data-partner-role="${esc(p.role)}"><summary>${esc(p.name)} <small>${esc(roleTitle(p.role||'driver'))}</small></summary>${p.inn?`<p>ИНН ${esc(p.inn)}</p>`:''}${controls32(buttons)}${participantNote29(p)}</details>`;
     }).join('');
     const shown=data.invitations.filter(x=>!x.archived);
     function inviteItem(x){
@@ -103,13 +103,18 @@ async function open32(modal,id=''){
     const paths={partners:'/api/partners',staff:'/api/employees',edit:'/api/journal/'+encodeURIComponent(id)+'/editor',trash:'/api/journal-deletions',settings:'/api/fleet/settings',shared:'/api/fleet/shared/'+encodeURIComponent(id)+'?week='+encodeURIComponent(board32.week||state.day)};
     const data=paths[modal]?await api(paths[modal]):null;
     if(state.user?.id!==uid||seq!==board32.token||state.modal!==old)return;
+    const keepExpanded=state.modal==='board:'+modal;
+    const key=el=>el.dataset.partnerRow?el.dataset.partnerRole+'/'+el.dataset.partnerRow:el.querySelector('summary')?.textContent.trim();
+    const oldPanel=document.getElementById('overlay');
+    const expanded=new Set(keepExpanded?[...oldPanel.querySelectorAll('details[open]')].map(key):[]);
     Object.assign(board32,{owner:uid,modal,id,data});state.modal='board:'+modal;render();
+    if(expanded.size)for(const detail of oldPanel.querySelectorAll('details'))detail.open=expanded.has(key(detail));
 }
 function renderMatches32(r){
     const carrier=state.user.role==='carrier';
     function row(x){
         const economics=carrier?(x.margin==null?'Расчёт неполный':`Остаток после расходов ${rub(x.margin)} · к возврату порожняком ${x.gain>=0?'+':''}${rub(x.gain)}`):(x.offeredPrice?`Цена перевозчика ${rub(x.offeredPrice)}`:'Цена предложения ещё не получена');
-        return `<article class="partner32"><button class="d31link" data-dispatch="detail" data-id="${esc(x.order)}">${esc(x.order)} · ${esc(x.fromCity)} → ${esc(x.toCity)}</button><b>${esc(x.vehicle)} · ${esc(x.carrier)}</b><small>${shortDate31(x.start)} ${esc(x.time)} · свободна в ${esc(x.availableCity)} · ${x.emptyKm==null?'пробег до подачи неизвестен':x.emptyKm+' км до подачи'}${x.needTime?' · уточнить время выгрузки':''}${!x.crewKnown?' · экипаж уточняется':''}</small><small>${esc(economics)}${carrier&&x.profitPercent!=null?' · '+Number(x.profitPercent)+'%':''}${!carrier&&x.mutual?' · выгоден обеим сторонам':''}</small><small>${esc(x.method)}${carrier&&!x.customCosts?' · ориентировочные расходы':''}</small></article>`;
+        return `<article class="partner32"><button class="d31link" data-dispatch="detail" data-id="${esc(x.order)}">${esc(x.fromCity)} → ${esc(x.toCity)}</button><b>${esc(x.vehicle)} · ${esc(x.carrier)}</b><small>${shortDate31(x.start)} ${esc(x.time)} · свободна в ${esc(x.availableCity)} · ${x.emptyKm==null?'пробег до подачи неизвестен':x.emptyKm+' км до подачи'}${x.needTime?' · уточнить время выгрузки':''}${!x.crewKnown?' · экипаж уточняется':''}</small><small>${esc(economics)}${carrier&&x.profitPercent!=null?' · '+Number(x.profitPercent)+'%':''}${!carrier&&x.mutual?' · выгоден обеим сторонам':''}</small><small>${esc(x.method)}${carrier&&!x.customCosts?' · ориентировочные расходы':''}</small></article>`;
     }
     const items=r.items;
     return items.slice(0,5).map(row).join('')+(items.length>5?`<details><summary>Остальные варианты · ${items.length-5}</summary>${items.slice(5).map(row).join('')}</details>`:'')||`<p class="d31empty">${carrier?'Нет подходящих открытых заявок на доступные машины. Для свободной машины можно указать город и дату в параметрах подбора.':'Для ваших заявок пока нет подходящих машин с открытым графиком.'}</p>`;
@@ -142,13 +147,15 @@ document.addEventListener('change',e=>{
 function link32(value){
     const host=document.getElementById('personalLink32')||document.querySelector('#overlay .modal');
     if(!host||!value)return;
-    const field=document.createElement('label');field.className='field';field.textContent='Персональная ссылка для водителя';
+    host.querySelector('[data-invitation-copy]')?.remove();
+    const field=document.createElement('label');field.className='field';field.dataset.invitationCopy='1';field.textContent='Персональная ссылка для водителя';
     const input=document.createElement('input');input.value=value;input.readOnly=true;field.append(input);host.append(field);input.select();
 }
 document.addEventListener('click',async e=>{
     const b=e.target.closest('[data-b32]');if(!b||!state.user)return;
     e.preventDefault();e.stopImmediatePropagation();
-    const action=b.dataset.b32,id=b.dataset.id||'',uid=state.user.id;
+    const action=b.dataset.b32,id=b.dataset.id||'',uid=state.user.id,screen=state.modal,ticket=board32.token;
+    const onScreen=()=>state.user?.id===uid&&state.modal===screen&&board32.token===ticket;
     b.disabled=true;
     try{
         if(['partners','staff','invite','trash','settings','edit'].includes(action)){await open32(action,id);return}
@@ -160,9 +167,9 @@ document.addEventListener('click',async e=>{
         }
         if(action==='closeStaff'){
             if(!confirm('Закрыть этому сотруднику вход в кабинет компании?'))return;
-            await api('/api/participants/team/'+Number(id)+'/deactivate','POST');if(state.user?.id===uid)await open32('staff');return;
+            await api('/api/participants/team/'+Number(id)+'/deactivate','POST');if(onScreen())await open32('staff');return;
         }
-        if(action==='inviteLink'){const r=await api('/api/participants/invitations/'+Number(id)+'/renew','POST');if(state.user?.id===uid)link32(r.link);return}
+        if(action==='inviteLink'){const r=await api('/api/participants/invitations/'+Number(id)+'/link','POST');if(onScreen())link32(r.link);return}
         if(action==='sendCompany'){const r=await api('/api/partners/invite','POST',{company_id:Number(id)});if(state.user?.id===uid)toast(r.message||'Приглашение отправлено');}
         else if(action==='accept'||action==='reject'){await api('/api/participants/invitations/'+Number(id)+'/respond','POST',{accepted:action==='accept'});}
         else if(action==='renew')await api('/api/participants/invitations/'+Number(id)+'/renew','POST');
@@ -172,7 +179,7 @@ document.addEventListener('click',async e=>{
             if(action==='share')await api('/api/fleet/share','POST',{partner_id:p.id,subject:p.role==='driver'?'driver':'company',enabled:!p.shared});
             else{if(!confirm('Удалить из партнёров '+p.name+'?'))return;await api(p.remove,'POST')}
         }else return;
-        if(state.user?.id!==uid)return;await loadState({fromEvent:true});await open32('partners');
+        if(state.user?.id!==uid)return;await loadState({fromEvent:true});if(onScreen())await open32('partners');
     }catch(err){errorToast(err)}
     finally{if(b.isConnected)b.disabled=false}
 },true);
@@ -203,4 +210,60 @@ document.addEventListener('submit',async e=>{
 },true);
 const signout32=showLogin;
 showLogin=function(){board32.token++;board32.search++;board32.owner=0;board32.data=null;match32.seq++;match32.key='';match32.data=null;signout32()};
+// Dialogs are rendered in a shared overlay, including the signup and recovery screens.
+const overlay=document.getElementById('overlay');
+let openDialogTitle='',returnTarget=null,returnSelector='';
+function rememberControl(element){
+    if(!element||overlay.contains(element))return;
+    returnTarget=element;
+    const data=element.getAttributeNames().filter(name=>name.startsWith('data-')&&name!=='data-testid');
+    returnSelector=data.length?element.tagName+data.map(name=>'['+name+'="'+CSS.escape(element.getAttribute(name))+'"]').join(''):'';
+}
+window.addEventListener('click',event=>{
+    const control=event.target.closest('button,a,summary');
+    if(control&&!overlay.querySelector('[role=dialog]'))rememberControl(control);
+    const menu=document.querySelector('.headerMore[open]');
+    if(menu&&(!menu.contains(event.target)||event.target.closest('button')))menu.open=false;
+},true);
+function focusableIn(dialog){
+    return [...dialog.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,a[href]')]
+        .filter(el=>el.getClientRects().length);
+}
+new MutationObserver(()=>{
+    const dialog=overlay.querySelector('[role=dialog]');
+    if(!dialog){
+        if(openDialogTitle){
+            const target=returnTarget?.isConnected?returnTarget:returnSelector?document.querySelector(returnSelector):null;
+            (target||document.querySelector('[data-account]')||document.getElementById('loginEmail'))?.focus({preventScroll:true});
+        }
+        openDialogTitle='';return;
+    }
+    for(const group of dialog.querySelectorAll('.field')){
+        const label=group.querySelector(':scope > label'),input=group.querySelector(':scope > input,:scope > select,:scope > textarea');
+        if(label&&input&&!label.htmlFor&&input.name){if(!input.id)input.id='field-'+input.closest('form')?.id+'-'+input.name;label.htmlFor=input.id}
+    }
+    const title=dialog.getAttribute('aria-label')||state.modal;
+    if(title!==openDialogTitle||!dialog.contains(document.activeElement)){
+        openDialogTitle=title;
+        const input=dialog.querySelector('input:not([type=hidden]):not([readonly]),select,textarea');
+        const target=input?.getClientRects().length?input:dialog.querySelector('h3')||dialog;
+        if(!target.matches('input,select,textarea'))target.tabIndex=-1;
+        target.focus({preventScroll:true});
+    }
+}).observe(overlay,{childList:true});
+document.addEventListener('keydown',event=>{
+    const dialog=overlay.querySelector('[role=dialog]');
+    if(!dialog){
+        const menu=document.querySelector('.headerMore[open]');
+        if(menu&&event.key==='Escape'){menu.open=false;menu.querySelector('summary').focus()}
+        return;
+    }
+    if(event.key==='Escape'&&dialog.querySelector('[data-close]')){event.preventDefault();closeModal();return}
+    if(event.key!=='Tab')return;
+    const items=focusableIn(dialog);
+    if(!items.length)return;
+    const first=items[0],last=items.at(-1);
+    if(event.shiftKey&&(document.activeElement===first||!items.includes(document.activeElement))){event.preventDefault();last.focus()}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+});
 startApp();

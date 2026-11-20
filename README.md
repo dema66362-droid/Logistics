@@ -1,4 +1,4 @@
-# Логистик 3.2.0
+# Логистик 3.3.0
 
 Учебный тестовый стенд: https://logistik-pilot-site.onrender.com/
 
@@ -97,7 +97,7 @@ start_render.sh проверяет конфигурацию и создаёт п
 
 Обязательные настройки: LOGISTIK_DEMO=0, LOGISTIK_ALLOW_SIGNUP=1, LOGISTIK_SECURE_COOKIE=1, LOGISTIK_DEPLOYMENT=pilot, LOGISTIK_DATABASE_URL с PostgreSQL, hostname в LOGISTIK_ALLOWED_HOSTS. Календарный день по умолчанию — Москва (LOGISTIK_TIMEZONE). Режим production пока блокируется.
 
-После Live проверьте /health: status=ok, version=3.2.0, затем пройдите [приёмку](docs/FINAL_TEST.md) с разных устройств.
+После Live проверьте /health: status=ok, version=3.3.0, затем пройдите [приёмку](docs/FINAL_TEST.md) с разных устройств.
 
 ## CSV и копии
 
@@ -113,3 +113,7 @@ python backup_db.py restore backups/pilot_snapshot.json --confirm-empty-database
 ## Дальнейший объём
 
 Подтверждение email и автоматическая почтовая отправка; приёмка фоновой доставки и слышимости на физических устройствах; часы/окна подачи, отдых и ручная занятость; проверка компаний/техники; 1С/ЭПД; независимый аудит, нагрузка и эксплуатационный регламент. Эти функции не объявляются готовыми.
+
+### Первый вход владельца на /admin
+
+Для выдачи личного пароля владельцу задайте на сервере LOGISTIK_SITE_ADMIN_SETUP_HASH (SHA-256 случайного начального пароля) и LOGISTIK_SITE_ADMIN_SETUP_UNTIL (срок в ISO 8601 с часовым поясом). Первый вход предлагает выбрать свой пароль. Запись и отзыв временного кода выполняются одной транзакцией. LOGISTIK_SITE_ADMIN_PASSWORD остаётся резервом владельца хостинга. В истории кабинета сохраняются время, ИНН, исполнитель и изменение статуса.

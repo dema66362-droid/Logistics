@@ -24,9 +24,9 @@ def plan(client,week):
     assert r.status_code==200,r.text
     return r.json()
 
-def create_bid(carrier,ref,driver_id,vid,day,end=None,delivery=None,time='11:15'):
+def create_bid(carrier,ref,driver_id,vid,day,end=None,delivery=None,time='11:15',terms_version=1):
     return post(carrier,'/api/offers',dict(order_ref=ref,driver_id=driver_id,vehicle_id=vid,
-        day=day,pickup=time,end_date=end or day,delivery_day=delivery or day,price=90000,accept_terms=True))
+        day=day,pickup=time,end_date=end or day,delivery_day=delivery or day,price=90000,accept_terms=True,terms_version=terms_version))
 
 def members(carrier,name,email=''):
     r=post(carrier,'/api/carrier/roster',dict(name=name,email=email))
