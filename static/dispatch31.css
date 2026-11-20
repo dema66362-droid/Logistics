@@ -25,7 +25,7 @@
 .d31link:hover{text-decoration:underline}
 .d31scroll{overflow:auto;max-width:100%}
 .d31board,.d31wide{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
-.d31wide{min-width:1950px}
+.d31wide{min-width:740px}.d31wide td{vertical-align:middle}.d31wide th:first-child{width:60px}
 .d31board{min-width:860px;table-layout:fixed}
 .d31board th,.d31board td,.d31wide th,.d31wide td{border-bottom:1px solid #dbe3ed;border-right:1px solid #e3e8f0;padding:8px;vertical-align:top;text-align:left}
 .d31board th{background:#f1f5fa}
@@ -50,4 +50,13 @@
   .d31queue>.d31actions{grid-column:2/-1}.d31bar .d31actions{gap:3px}
   .d31dayhead{gap:3px;padding:7px;font-size:13px}.d31dayhead span{font-size:11px}
   .d31board th:first-child{width:112px}.d31legend{gap:6px;font-size:10px}
+}
+
+.journalSearch{display:grid;gap:3px;text-align:left;color:#455871;font-size:12px;flex:1;max-width:310px}.journalSearch input{font:inherit;font-size:14px;border:1px solid #c7d3e4;padding:9px 11px;border-radius:8px;background:#fff;min-width:0}
+.d31queue{grid-template-columns:26px 47px minmax(110px,1.5fr) minmax(95px,1fr) minmax(110px,1fr) auto}.d31queue .d31link,.d31wide .d31link{border:0;background:none}.journalMeta{font-size:12px;line-height:1.5}.d31crew{overflow-wrap:anywhere}.journalSearch input:focus-visible,summary:focus-visible{outline:2px solid #245fcd}
+.d31month:has(+.d31legend){margin-top:8px}.d31board th:first-child{position:sticky;left:0;z-index:1;background:#f5f8fc}
+.headerMore{position:relative}.headerMore summary{cursor:pointer;list-style:none}.headerMore summary::-webkit-details-marker{display:none}.headerMore[open] .headerMenu{display:grid;position:absolute;right:0;top:calc(100% + 3px);z-index:15;background:white;padding:6px;min-width:145px;border:1px solid #cad6e5;border-radius:9px;box-shadow:0 6px 20px #182e4e20}.headerMenu button{text-align:left;border:0}
+@media(max-width:760px){.d31queue{grid-template-columns:24px 45px minmax(0,1fr);gap:4px 7px}.d31crew,.journalMeta,.d31queue>.d31actions{grid-column:3}.journalSearch{min-width:185px;max-width:100%}.top-actions .btn,.d31link,.d31actions button{min-height:38px}.headerMore[open] .headerMenu{right:auto;left:0}.d31num,.d31time{align-self:start}}
+@media(max-width:700px){
+ .d31wide{min-width:0}.d31wide,.d31wide tbody,.d31wide tr{display:block}.d31wide thead{position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden}.d31wide tr{display:grid;grid-template-columns:1fr 1fr;gap:5px 10px;padding:10px 0;border-bottom:1px solid #dce4ef}.d31wide td{display:block;border:0;padding:0;overflow-wrap:anywhere}.d31wide td:nth-child(3),.d31wide td:nth-child(4),.d31wide td[colspan]{grid-column:1/-1}.d31wide td:nth-child(1):before{content:"Очередь · "}.d31wide td:nth-child(2):before{content:"Подача · "}.d31wide td:nth-child(4):before{content:"Перевозчик · "}.d31wide td:nth-child(7):before{content:"Создал · "}.d31wide td[colspan]:before{content:none}
 }

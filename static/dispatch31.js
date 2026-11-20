@@ -17,9 +17,12 @@ function renderDashboard31(markup) {
         for(const name of b.getAttributeNames())if(a.getAttribute(name)!==b.getAttribute(name))a.setAttribute(name,b.getAttribute(name));
         if(a.innerHTML!==b.innerHTML)a.innerHTML=b.innerHTML;
     }
+    const search=document.activeElement?.id==='search'?document.activeElement:null;
+    const selection=search?[search.selectionStart,search.selectionEnd]:null;
     incoming.remove();
     while(current.nextSibling)current.nextSibling.remove();
     main.append(template.content);
+    if(selection){const next=document.getElementById('search');next?.focus({preventScroll:true});next?.setSelectionRange(...selection)}
 }
 const weekNames31=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 const stageNames31={waiting_driver:'В плане',driver_ok:'Экипаж в резерве',selected:'Назначен',completed:'Завершён'};
@@ -27,7 +30,8 @@ const shortDate31=d=>d?d.slice(8,10)+'.'+d.slice(5,7):'—';
 const yearMonth31=d=>d.slice(0,7);
 let dayFilter31='',fullColumns31=false,detailDriver31=0,form31={},planCache31={key:'',version:-1,data:null,request:0};
 function button31(label,action,id='',primary=false){
-    return `<button type="button" class="btn small ${primary?'primary':''}" data-dispatch="${esc(action)}" data-id="${esc(id)}">${esc(label)}</button>`;
+    const direction={weekPrev:'Предыдущая неделя',weekNext:'Следующая неделя',monthPrev:'Предыдущий месяц',monthNext:'Следующий месяц'}[action];
+    return `<button type="button" ${direction?'aria-label="'+direction+'"':''} class="btn small ${primary?'primary':''}" data-dispatch="${esc(action)}" data-id="${esc(id)}">${esc(label)}</button>`;
 }
 function field31(label,name,options={}) {
     const {type='text',value='',required=true,extra=''}=options;
@@ -49,17 +53,42 @@ function orderStage31(o){
     if(q.some(q=>q.status==='waiting_driver'))return 'В плане';
     return o.searchLaunched?'У перевозчика':'Черновик';
 }
-function tableFields31(o) {
-    return [['Заявка',o.id],['Создал',o.author],['Менеджер',o.manager],['Дата отгрузки',shortDate31(o.date)+' '+o.time],['Дата выгрузки',shortDate31(o.unload)],
-        ['Грузополучатель',o.recipient],['Продукт',o.product],['Объём, т',o.tons],['№ электронной заявки',o.epd],['№ ЭТрН',o.etrn],
-        ['Способ поставки',o.mode],['Способ доставки',o.vehicleType],['Перевозчик',carrierName32(o)],['Водитель',o.driver],['Адрес выгрузки',o.deliveryAddress],
-        ['Данные автомобиля',o.car],['Данные на водителя',o.driver?'Карточка водителя':''],['Тариф за тонну',o.rate?rub(o.rate):''],['Стоимость перевозки',o.price?rub(o.price):'']];
+function journalActions31(order){
+    if(order.status==='search'&&!order.searchLaunched&&!order.reviewOnly)
+        return button31(order.hazardous?'Запросить проверку':'Отправить заявку','send',order.id,true);
+    return order.status==='choice'?button31('Предложения','choose',order.id):'';
 }
-function queueRows31(rows) {
-    if(fullColumns31 && rows.length){
-        return `<div class="d31scroll"><table class="d31wide"><thead><tr><th>№ очереди</th>${tableFields31(rows[0]).map(([k])=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${rows.map((o,i)=>`<tr><td>${i+1}</td>${tableFields31(o).map(([k,v],j)=>`<td>${j===0?button31(v,'detail',v):k==='Стоимость перевозки'?price32(o):esc(v||'—')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
-    }
-    return rows.map((o,i)=>`<article class="d31queue"><div class="d31num">${i+1}</div><div class="d31time ${o.slotProposals?.length?'attention':''}">${esc(o.time)}</div><div class="d31route"><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${esc(o.recipient)} · выгрузка ${shortDate31(o.unload)}</small></div><div class="d31crew">${esc(o.car||'Машина не назначена')}<small>Перевозчик · ${esc(carrierName32(o))}</small><small>${esc(o.driver||'')} ${price32(o)}</small><small>Создал · ${esc(o.author||'—')}</small></div><div class="d31actions">${(!o.searchLaunched&&!o.reviewOnly&&o.status==='search')?button31(o.hazardous?'Запросить проверку':'Отправить заявку','send',o.id,true):''}${o.status==='choice'?button31('Предложения','choose',o.id):''}</div>${slotStatus31(o,true)}</article>`).join('');
+function journalMatches31(order){
+    const normalize=value=>String(value||'').toLocaleLowerCase('ru').replaceAll('ё','е');
+    const needle=normalize(state.search).trim();
+    return !needle||[order.id,order.from,order.to,order.recipient,order.product,carrierName32(order),
+        order.car,order.driver,order.author,order.epd,order.etrn].some(value=>normalize(value).includes(needle));
+}
+function queueRows31(orders){
+    const rows=orders.map((order,i)=>({order,position:i+1})).filter(({order})=>journalMatches31(order));
+    if(!rows.length)return '';
+    const markup=rows.map(({order:o,position})=>{
+        const route=button31(o.from+' → '+o.to,'detail',o.id).replace('btn small ','d31link ');
+        const arrival=o.unload&&o.unload!==o.date?'Выгрузка '+shortDate31(o.unload):'';
+        const freight=[o.recipient,o.product,o.tons?fmt(o.tons)+' т':'',arrival].filter(Boolean).join(' · ');
+        const crew=[o.car,o.driver].filter(Boolean).join(' · ');
+        const author=o.author?esc(o.author):'—';
+        const time='<span class="d31time'+(o.slotProposals?.length?' attention':'')+'">'+esc(o.time)+'</span>';
+        const carrier=esc(carrierName32(o)),actions=journalActions31(o),stage=esc(orderStage31(o));
+        const details=slotStatus31(o,true);
+        if(fullColumns31){
+            return '<tr><td aria-label="Место в очереди">'+position+'</td><td>'+time+'</td><td>'+route+'<small>'+esc(freight)+'</small></td><td>'+carrier+'<small>'+esc(crew)+'</small></td><td>'+price32(o)+'</td><td>'+stage+'</td><td>'+author+'</td><td>'+actions+'</td></tr>'
+                +(details?'<tr><td colspan="8">'+details+'</td></tr>':'');
+        }
+        return '<article class="d31queue"><span class="d31num" aria-label="Место в очереди '+position+'">'+position+'</span>'+time
+            +'<div class="d31route">'+route+'<small>'+esc(freight)+'</small></div><div class="d31crew"><b>'+carrier+'</b><small>'+esc(crew)+'</small></div>'
+            +'<div class="journalMeta"><span>'+stage+'</span> · '+price32(o)+(o.author?'<small>Создал · '+author+'</small>':'')+'</div>'
+            +(actions?'<div class="d31actions">'+actions+'</div>':'')+details+'</article>';
+    }).join('');
+    if(!fullColumns31)return markup;
+    return '<div class="d31scroll"><table class="d31wide" aria-label="Очередь рейсов"><thead><tr>'
+        +['Очередь','Подача','Маршрут и груз','Перевозчик и экипаж','Стоимость','Статус','Создал','Действие'].map(t=>'<th scope="col">'+t+'</th>').join('')
+        +'</tr></thead><tbody>'+markup+'</tbody></table></div>';
 }
 function shipperSchedule31(title){
     const dates=weekDates(),groups=dates.map(day=>{
@@ -73,7 +102,7 @@ function shipperSchedule31(title){
     const focus=groups.some(g=>g.day===dayFilter31)?dayFilter31:'';
     return htop(title,'Заказчик',`<button class="btn" data-export>CSV</button><button class="btn primary" data-new>＋ Новая заявка</button>`)+
         `<div class="d31">${alerts}<section class="panel d31panel">${periodBar31(weekTitle(),'week')}<div class="d31days">${groups.map((g,i)=>`<button class="d31day" data-dispatch="shipDay" data-id="${g.day}" aria-pressed="${focus===g.day}"><span>${weekNames31[i]}</span><b>${shortDate31(g.day)}</b><small>ТС · ${g.cars}</small></button>`).join('')}</div></section>
-        <section class="panel d31panel"><div class="section-head"><div><h2>Очередь на погрузку</h2><small>По времени подачи</small></div><div class="d31actions">${focus?button31('Вся неделя','clearDay'):''}${button31(fullColumns31?'Кратко':'Все колонки','columns')}</div></div>${groups.filter(g=>!focus||g.day===focus).map(g=>`<div class="d31dayhead"><b>${weekNames31[dates.indexOf(g.day)]}, ${localeDay(g.day)}</b><span>Машин · ${g.cars} &nbsp; Без машины · ${g.open}</span></div>${queueRows31(g.rows)||'<p class="d31empty">Погрузок нет</p>'}`).join('')}</section></div>`;
+        <section class="panel d31panel"><div class="section-head"><div><h2>Очередь на погрузку</h2><small>По времени подачи</small></div><label class="journalSearch"><span>Поиск по неделе</span><input id="search" type="search" placeholder="Маршрут, перевозчик, машина…" value="${esc(state.search||'')}"></label><div class="d31actions">${focus?button31('Вся неделя','clearDay'):''}${button31(fullColumns31?'Карточками':'Таблицей','columns')}</div></div>${groups.filter(g=>(!focus||g.day===focus)&&(!state.search.trim()||g.rows.some(journalMatches31))).map(g=>`<div class="d31dayhead"><b>${weekNames31[dates.indexOf(g.day)]}, ${localeDay(g.day)}</b><span>Машин · ${g.cars} &nbsp; Без машины · ${g.open}</span></div>${queueRows31(g.rows)||'<p class="d31empty">Погрузок нет</p>'}`).join('')||'<p class="d31empty" role="status">По этому запросу рейсов нет.</p>'}</section></div>`;
 }
 overview=()=>shipperSchedule31('План отгрузок')+recommendPanel32();
 table=()=>shipperSchedule31('Таблица отгрузок')+recommendPanel32();
@@ -88,6 +117,12 @@ function scheduleRow31(j) {
     const stage=o.status==='completed'?'Завершён':stageNames31[q.status]||q.status;
     return `<div class="d31job"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.pickupCompany||o.shipperName||'Погрузка')} → ${shortDate31(q.deliveryDay||o.unload)} · ${esc(o.recipient||'Выгрузка')}</small><small>Заказчик · ${esc(o.shipperName||'—')} &nbsp; Перевозчик · ${esc(q.carrier||o.carrier||'—')} &nbsp; ${esc(q.car||o.car||'')}</small></div><span class="pill ${q.status==='selected'?'green':'amber'}">${esc(stage)}</span></div>`;
 }
+function nextTrip31(){
+    const today=state.businessDay;
+    return state.offers.filter(q=>['driver_ok','selected','waiting_driver'].includes(q.status)&&q.endDate>=today)
+        .filter(q=>!['completed','cancelled'].includes(getOrder(q.orderId)?.status))
+        .sort((a,b)=>a.day.localeCompare(b.day)||a.pickup.localeCompare(b.pickup))[0];
+}
 function presentMonth31(data) {
     const row=data.drivers[0]||{jobs:[],leave:[]},dates=data.dates;
     const blank=(new Date(dates[0]+'T12:00:00').getDay()+6)%7;
@@ -95,7 +130,7 @@ function presentMonth31(data) {
     const chosenJobs=row.jobs.filter(j=>dateOnJob31(j,chosen));
     const currentLeave=row.leave.find(x=>x.start<=chosen&&chosen<=x.end);
     const month=new Date(dates[0]+'T12:00:00').toLocaleDateString('ru-RU',{month:'long',year:'numeric'});
-    return `<section class="panel d31panel" data-month-grid="${dates[0].slice(0,7)}">${periodBar31(month,'month')}<div class="d31month">${weekNames31.map(w=>`<span class="d31weekday">${w}</span>`).join('')}${'<span></span>'.repeat(blank)}${dates.map(d=>{
+    return `<section class="panel d31panel" data-month-grid="${dates[0].slice(0,7)}">${periodBar31(month,'month')}${nextTrip31()?button31('Ближайший рейс','nextTrip'):''}<div class="d31month">${weekNames31.map(w=>`<span class="d31weekday">${w}</span>`).join('')}${'<span></span>'.repeat(blank)}${dates.map(d=>{
         const jobs=row.jobs.filter(j=>dateOnJob31(j,d)),leave=row.leave.some(x=>x.start<=d&&d<=x.end);
         const kind=leave?'vacation':jobs.some(j=>j.confirmed)?'booked':jobs.length?'pending':'free';
         const tag=leave?'Отпуск':jobs.length?('Рейс · '+jobs.length):'';
@@ -110,7 +145,7 @@ function carrierBoard31(data){
     return `<section class="panel d31panel">${periodBar31(weekTitle(),'week')}<div class="section-head"><h2>График водителей</h2>${detailDriver31?button31('Все водители','allDrivers'):''}</div><div class="d31scroll"><table class="d31board"><thead><tr><th>Водитель</th>${dates.map((d,i)=>`<th>${weekNames31[i]}<small>${shortDate31(d)}</small></th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><th><button class="d31link" data-dispatch="oneDriver" data-id="${row.driver.id}">${esc(row.driver.name)}</button><small>${row.driver.userId?'':'Кабинет не подключён'}</small></th>${dates.map(d=>{
         const jobs=row.jobs.filter(j=>dateOnJob31(j,d));
         const leave=row.leave?.some(l=>l.start<=d&&d<=l.end);
-        return `<td>${jobs.map(j=>`<button class="d31boardtrip ${j.confirmed?'booked':'pending'}" data-dispatch="detail" data-id="${esc(j.order.id)}"><b>${esc(j.order.from)} → ${esc(j.order.to)}</b><small>${shortDate31(j.order.date)} ${esc(j.order.time)} → ${shortDate31(j.offer.deliveryDay)}<br>${esc(j.order.shipperName)}<br>${esc(j.offer.car||j.order.car||'')} · ${esc(stageNames31[j.offer.status])}</small></button>`).join('')||`<small>${leave?'Отпуск':row.busyOutside.includes(d)?'Занят':row.externalAvailabilityKnown?'Свободен':'Нет рейса у вас'}</small>`}</td>`;
+        return `<td>${jobs.map(j=>`<button class="d31boardtrip ${j.confirmed?'booked':'pending'}" data-dispatch="detail" data-id="${esc(j.order.id)}"><b>${esc(j.order.from)} → ${esc(j.order.to)}</b><small>${d===j.offer.day?'Погрузка '+esc(j.order.time):''}${d===j.offer.deliveryDay?(d===j.offer.day?' · выгрузка':'Выгрузка'):d>j.offer.day?(d>j.offer.deliveryDay?'Резерв':'В пути'):''}<br>${esc(j.order.shipperName)}<br>${esc(j.offer.car||j.order.car||'')} · ${esc(stageNames31[j.offer.status])}</small></button>`).join('')||`<small>${leave?'Отпуск':row.busyOutside.includes(d)?'Занят':row.externalAvailabilityKnown?'Свободен':'Нет рейса у вас'}</small>`}</td>`;
     }).join('')}</tr>`).join('')}</tbody></table></div>${!rows.length?'<p class="d31empty">Добавьте своего водителя, чтобы открыть его график.</p>':''}</section>
     ${detailDriver31&&rows[0]?`<section class="panel d31panel"><div class="section-head"><h2>${esc(rows[0].driver.name)}</h2>${button31('Запланировать рейс','manual',detailDriver31,true)}</div>${rows[0].jobs.map(scheduleRow31).join('')||'<p class="d31empty">На эту неделю рейсов нет.</p>'}</section>`:''}`;
 }
@@ -136,11 +171,11 @@ function planPanel31(){
     }
     return `<div data-period-plan aria-live="polite">${cache.data?(month?presentMonth31(cache.data):carrierBoard31(cache.data)):'<p class="d31empty">Загрузка графика…</p>'}</div>`;
 }
-driver=()=>htop('Кабинет водителя','Водитель',button31('＋ Отпуск','leave'))+`<div class="d31">${planPanel31()}</div>`;
+driver=()=>htop('Кабинет водителя','Водитель')+`<div class="d31">${planPanel31()}</div>`;
 carrier=function(){
     const inbox=state.orders.filter(o=>!o.internal&&['search','choice'].includes(o.status)&&!state.offers.some(q=>q.orderId===o.id&&['waiting_driver','driver_ok','selected'].includes(q.status)));
     const toolbar='<button class="btn" data-add-driver>＋ Водитель</button> <button class="btn" data-add-vehicle>＋ Машина</button> '+button31('Запланировать рейс','manual','',true);
-    return htop('Кабинет перевозчика','Перевозчик',toolbar)+`<div class="d31">${planPanel31()}<section class="panel d31panel"><h2>Входящие заявки · ${inbox.length}</h2>${inbox.map(o=>`<article class="d31request"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.shipperName||'Заказчик')} · ${esc(o.product)} · ${fmt(o.tons)} т</small></div><div class="d31actions">${o.reviewOnly?button31('Подтвердить получение','reviewSeen',o.id):`<button class="btn primary small" data-bid="${esc(o.id)}">Предложить машину</button>${button31('Предложить время','slot',o.id)}`}${o.addressed?button31('Отклонить','declineIncoming',o.id):''}</div>${slotStatus31(o)}</article>`).join('')||'<p class="d31empty">Новых заявок нет.</p>'}</section>${recommendPanel32()}</div>`;
+    return htop('Кабинет перевозчика','Перевозчик',toolbar)+`<div class="d31">${planPanel31()}<section class="panel d31panel"><h2>Входящие заявки · ${inbox.length}</h2>${inbox.map(o=>`<article class="d31request"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.shipperName||'Заказчик')} · ${esc(o.product)} · ${fmt(o.tons)} т</small></div><div class="d31actions">${o.reviewOnly?(o.reviewSeen?'<small>Получение подтверждено</small>':button31('Подтвердить получение','reviewSeen',o.id)):`<button class="btn primary small" data-bid="${esc(o.id)}">Предложить машину</button>${button31('Предложить время','slot',o.id)}`}${o.addressed?button31('Отклонить','declineIncoming',o.id):''}</div>${slotStatus31(o)}</article>`).join('')||'<p class="d31empty">Новых заявок нет.</p>'}</section>${recommendPanel32()}</div>`;
 };
 function accountInn31(account) {
     if(state.user?.role==='driver')return '';
@@ -157,7 +192,8 @@ function details31(ref){
     const role=state.user.role,alive=['search','choice','confirmed'].includes(o.status),my=state.offers.filter(q=>q.orderId===ref);
     const proposed=slotStatus31(o,role==='shipper');
     const fields=[...(role==='shipper'?[]:[['Заказчик',o.shipperName]]),['Создал',o.author],['Подача по очереди',shortDate31(o.date)+' в '+o.time],['Город погрузки',o.from],['Грузоотправитель',o.pickupCompany],['Адрес погрузки',o.pickupAddress],['Контакт на погрузке',o.pickupContact],['Выгрузка',shortDate31(o.unload)],['Город выгрузки',o.to],['Грузополучатель',o.recipient],['Адрес выгрузки',o.deliveryAddress],['Контакт на выгрузке',o.recipientContact],['Продукт',o.product],['Объём, т',o.tons],['Автомобиль',o.car],['Водитель',o.driver],['Перевозчик',carrierName32(o)],['Требования',o.terms]];
-    if(role!=='driver')fields.push(['Менеджер',o.manager],['Номер ЭПД',o.epd],['Номер ЭТрН',o.etrn],['Тариф за тонну',o.rate?rub(o.rate):''],['Комментарий',o.note]);
+    if(role!=='driver'&&o.manager&&o.manager!==o.author&&!o.manager.toLowerCase().split(/\s+/).includes((o.author||'').toLowerCase()))fields.push(['Ответственный менеджер',o.manager]);
+    if(role!=='driver')fields.push(['Номер ЭПД',o.epd],['Номер ЭТрН',o.etrn],['Тариф за тонну',o.rate?rub(o.rate):''],['Комментарий',o.note]);
     let actions='';
     if(!o.internal&&alive&&!o.hazardous)actions+=button31(role==='shipper'?'Изменить время подачи':'Предложить время','slot',ref);
     if(role==='shipper'){
@@ -166,8 +202,8 @@ function details31(ref){
     } else if(o.internal){
         if(role==='carrier'&&o.privateStage==='selected')actions+=button31('Завершить рейс','internalComplete',ref,true);
     } else if(role==='carrier'){
-        if(o.reviewOnly)actions+=button31('Подтвердить получение','reviewSeen',ref);
-        else if(['search','choice'].includes(o.status)&&!my.some(q=>['waiting_driver','driver_ok','selected'].includes(q.status)))actions+=`<button class="btn small primary" data-bid="${esc(ref)}">Предложить машину</button>`;
+        if(o.reviewOnly&&!o.reviewSeen)actions+=button31('Подтвердить получение','reviewSeen',ref);
+        else if(!o.reviewOnly&&['search','choice'].includes(o.status)&&!my.some(q=>['waiting_driver','driver_ok','selected'].includes(q.status)))actions+=`<button class="btn small primary" data-bid="${esc(ref)}">Предложить машину</button>`;
     }
     if(o.canEdit && o.status!=='cancelled')actions+=action32('Редактировать','edit',ref)+action32('Отмена заявки','cancel',ref);
     const offers=my.filter(q=>['waiting_driver','driver_ok','selected'].includes(q.status)).map(q=>{
@@ -234,6 +270,7 @@ document.addEventListener('click',async e=>{
         if(['leave','slot','roster','rosterContact','manual'].includes(action)){openDispatch(action,id);return;}
         if(action==='columns'){fullColumns31=!fullColumns31;render();return;}
         if(action==='shipDay'||action==='clearDay'){dayFilter31=action==='clearDay'||dayFilter31===id?'':id;render();return;}
+        if(action==='nextTrip'){const trip=nextTrip31();if(trip){state.day=trip.day<state.businessDay?state.businessDay:trip.day;render()}return;}
         if(action==='driverDay'){state.day=id;render();return;}
         if(action==='weekNext'||action==='weekPrev'){state.day=plusDays(state.day,action==='weekNext'?7:-7);dayFilter31='';render();return;}
         if(action==='monthNext'||action==='monthPrev'){moveMonth31(action==='monthNext'?1:-1);render();return;}
@@ -329,4 +366,4 @@ loadState=async function(options={}){
     }
 };
 const originalSignOut31=showLogin;
-showLogin=function(){form31={};planCache31.request++;planCache31.key='';planCache31.data=null;detailDriver31=0;dayFilter31='';fullColumns31=false;originalSignOut31()};
+showLogin=function(){form31={};planCache31.request++;planCache31.key='';planCache31.data=null;detailDriver31=0;dayFilter31='';fullColumns31=false;state.search='';originalSignOut31()};

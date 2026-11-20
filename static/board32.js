@@ -109,7 +109,7 @@ function renderMatches32(r){
     const carrier=state.user.role==='carrier';
     function row(x){
         const economics=carrier?(x.margin==null?'Расчёт неполный':`Остаток после расходов ${rub(x.margin)} · к возврату порожняком ${x.gain>=0?'+':''}${rub(x.gain)}`):(x.offeredPrice?`Цена перевозчика ${rub(x.offeredPrice)}`:'Цена предложения ещё не получена');
-        return `<article class="partner32"><button class="d31link" data-dispatch="detail" data-id="${esc(x.order)}">${esc(x.order)} · ${esc(x.fromCity)} → ${esc(x.toCity)}</button><b>${esc(x.vehicle)} · ${esc(x.carrier)}</b><small>${shortDate31(x.start)} ${esc(x.time)} · свободна в ${esc(x.availableCity)} · ${x.emptyKm==null?'пробег до подачи неизвестен':x.emptyKm+' км до подачи'}${x.needTime?' · уточнить время выгрузки':''}${!x.crewKnown?' · экипаж уточняется':''}</small><small>${esc(economics)}${carrier&&x.profitPercent!=null?' · '+Number(x.profitPercent)+'%':''}${!carrier&&x.mutual?' · выгоден обеим сторонам':''}</small><small>${esc(x.method)}${carrier&&!x.customCosts?' · ориентировочные расходы':''}</small></article>`;
+        return `<article class="partner32"><button class="d31link" data-dispatch="detail" data-id="${esc(x.order)}">${esc(x.fromCity)} → ${esc(x.toCity)}</button><b>${esc(x.vehicle)} · ${esc(x.carrier)}</b><small>${shortDate31(x.start)} ${esc(x.time)} · свободна в ${esc(x.availableCity)} · ${x.emptyKm==null?'пробег до подачи неизвестен':x.emptyKm+' км до подачи'}${x.needTime?' · уточнить время выгрузки':''}${!x.crewKnown?' · экипаж уточняется':''}</small><small>${esc(economics)}${carrier&&x.profitPercent!=null?' · '+Number(x.profitPercent)+'%':''}${!carrier&&x.mutual?' · выгоден обеим сторонам':''}</small><small>${esc(x.method)}${carrier&&!x.customCosts?' · ориентировочные расходы':''}</small></article>`;
     }
     const items=r.items;
     return items.slice(0,5).map(row).join('')+(items.length>5?`<details><summary>Остальные варианты · ${items.length-5}</summary>${items.slice(5).map(row).join('')}</details>`:'')||`<p class="d31empty">${carrier?'Нет подходящих открытых заявок на доступные машины. Для свободной машины можно указать город и дату в параметрах подбора.':'Для ваших заявок пока нет подходящих машин с открытым графиком.'}</p>`;
@@ -142,7 +142,8 @@ document.addEventListener('change',e=>{
 function link32(value){
     const host=document.getElementById('personalLink32')||document.querySelector('#overlay .modal');
     if(!host||!value)return;
-    const field=document.createElement('label');field.className='field';field.textContent='Персональная ссылка для водителя';
+    host.querySelector('[data-invitation-copy]')?.remove();
+    const field=document.createElement('label');field.className='field';field.dataset.invitationCopy='1';field.textContent='Персональная ссылка для водителя';
     const input=document.createElement('input');input.value=value;input.readOnly=true;field.append(input);host.append(field);input.select();
 }
 document.addEventListener('click',async e=>{
@@ -162,7 +163,7 @@ document.addEventListener('click',async e=>{
             if(!confirm('Закрыть этому сотруднику вход в кабинет компании?'))return;
             await api('/api/participants/team/'+Number(id)+'/deactivate','POST');if(state.user?.id===uid)await open32('staff');return;
         }
-        if(action==='inviteLink'){const r=await api('/api/participants/invitations/'+Number(id)+'/renew','POST');if(state.user?.id===uid)link32(r.link);return}
+        if(action==='inviteLink'){const r=await api('/api/participants/invitations/'+Number(id)+'/link','POST');if(state.user?.id===uid)link32(r.link);return}
         if(action==='sendCompany'){const r=await api('/api/partners/invite','POST',{company_id:Number(id)});if(state.user?.id===uid)toast(r.message||'Приглашение отправлено');}
         else if(action==='accept'||action==='reject'){await api('/api/participants/invitations/'+Number(id)+'/respond','POST',{accepted:action==='accept'});}
         else if(action==='renew')await api('/api/participants/invitations/'+Number(id)+'/renew','POST');
@@ -203,4 +204,60 @@ document.addEventListener('submit',async e=>{
 },true);
 const signout32=showLogin;
 showLogin=function(){board32.token++;board32.search++;board32.owner=0;board32.data=null;match32.seq++;match32.key='';match32.data=null;signout32()};
+// Dialogs are rendered in a shared overlay, including the signup and recovery screens.
+const overlay=document.getElementById('overlay');
+let openDialogTitle='',returnTarget=null,returnSelector='';
+function rememberControl(element){
+    if(!element||overlay.contains(element))return;
+    returnTarget=element;
+    const data=element.getAttributeNames().filter(name=>name.startsWith('data-')&&name!=='data-testid');
+    returnSelector=data.length?element.tagName+data.map(name=>'['+name+'="'+CSS.escape(element.getAttribute(name))+'"]').join(''):'';
+}
+window.addEventListener('click',event=>{
+    const control=event.target.closest('button,a,summary');
+    if(control&&!overlay.querySelector('[role=dialog]'))rememberControl(control);
+    const menu=document.querySelector('.headerMore[open]');
+    if(menu&&(!menu.contains(event.target)||event.target.closest('button')))menu.open=false;
+},true);
+function focusableIn(dialog){
+    return [...dialog.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,a[href]')]
+        .filter(el=>el.getClientRects().length);
+}
+new MutationObserver(()=>{
+    const dialog=overlay.querySelector('[role=dialog]');
+    if(!dialog){
+        if(openDialogTitle){
+            const target=returnTarget?.isConnected?returnTarget:returnSelector?document.querySelector(returnSelector):null;
+            (target||document.querySelector('[data-account]')||document.getElementById('loginEmail'))?.focus({preventScroll:true});
+        }
+        openDialogTitle='';return;
+    }
+    for(const group of dialog.querySelectorAll('.field')){
+        const label=group.querySelector(':scope > label'),input=group.querySelector(':scope > input,:scope > select,:scope > textarea');
+        if(label&&input&&!label.htmlFor&&input.name){if(!input.id)input.id='field-'+input.closest('form')?.id+'-'+input.name;label.htmlFor=input.id}
+    }
+    const title=dialog.getAttribute('aria-label')||state.modal;
+    if(title!==openDialogTitle||!dialog.contains(document.activeElement)){
+        openDialogTitle=title;
+        const input=dialog.querySelector('input:not([type=hidden]):not([readonly]),select,textarea');
+        const target=input?.getClientRects().length?input:dialog.querySelector('h3')||dialog;
+        if(!target.matches('input,select,textarea'))target.tabIndex=-1;
+        target.focus({preventScroll:true});
+    }
+}).observe(overlay,{childList:true});
+document.addEventListener('keydown',event=>{
+    const dialog=overlay.querySelector('[role=dialog]');
+    if(!dialog){
+        const menu=document.querySelector('.headerMore[open]');
+        if(menu&&event.key==='Escape'){menu.open=false;menu.querySelector('summary').focus()}
+        return;
+    }
+    if(event.key==='Escape'&&dialog.querySelector('[data-close]')){event.preventDefault();closeModal();return}
+    if(event.key!=='Tab')return;
+    const items=focusableIn(dialog);
+    if(!items.length)return;
+    const first=items[0],last=items.at(-1);
+    if(event.shiftKey&&(document.activeElement===first||!items.includes(document.activeElement))){event.preventDefault();last.focus()}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+});
 startApp();
