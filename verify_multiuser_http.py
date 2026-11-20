@@ -88,8 +88,6 @@ def run():
             assert st_driver['offers'] and all(x['price']==0 for x in st_driver['offers'])
             assert st_driver['orders'][0].get('deliveryAddress','')==''
             assert st_driver['orders'][0].get('recipientContact','')==''
-            check(post(d1,f'/api/offers/{int(q1.split("-")[-1])}/driver-response?accepted=true'),200,'driver 1 confirm')
-            check(post(d2,f'/api/offers/{int(q2.split("-")[-1])}/driver-response?accepted=true'),200,'driver 2 confirm')
             check(post(ship,f'/api/offers/{int(q2.split("-")[-1])}/accept'),200,'shipper selects second carrier')
             final=check(ship['client'].get('/api/state'),200,'shipper final')
             assert next(o for o in final['orders'] if o['id']=='TEST-1001')['status']=='confirmed'
@@ -97,7 +95,7 @@ def run():
             assert check(d1['client'].get('/api/state'),200,'losing driver')['orders']==[]
             assert check(post(ship,f'/api/offers/{int(q1.split("-")[-1])}/accept'),409,'double assignment blocked')
             check(outsider.get('/api/export.csv'),401,'anonymous export blocked')
-            print('PASS: 5 independent HTTP sessions, auth, privacy, two bids, driver confirmation, one winning assignment')
+            print('PASS: 5 independent HTTP sessions, auth, privacy, two bids, automatic driver scheduling, one winning assignment')
         finally:
             for c in clients: c.close()
             proc.terminate()
