@@ -501,6 +501,11 @@ def notify_shipment_action(db:Session,actor:User,shipment:Shipment,action:str):
         if shipment.public_external:
             carriers.update(o.id for o in db.scalars(select(Organization).where(Organization.kind=='carrier')) if fleet_suitable(db,shipment,o.id))
         carriers={cid for cid in carriers if fleet_suitable(db,shipment,cid)}
+    else:
+        # An unaddressed search also has an audience before the first bid.
+        delivered=select(User.org_id).join(Notification,Notification.user_id==User.id).where(
+            Notification.shipment_id==shipment.id,Notification.kind=='new_order',User.role=='carrier').distinct()
+        carriers.update(cid for cid in db.scalars(delivered) if shipment.public_external or allowed(db,shipment,cid))
     for cid in carriers:
         recipients.update(u.id for u in db.scalars(select(User).where(User.org_id==cid,User.role=='carrier',User.active.is_(True))))
     recipients.add(actor.id)
@@ -1014,7 +1019,7 @@ def active_proposal(db, proposal):
             not shipment.selected_offer_id or shipment.selected_offer_id==offer.id)
     if shipment.selected_offer_id:
         return db.get(Offer,shipment.selected_offer_id).carrier_id==proposal.carrier_id
-    return shipment.search_launched and can_receive(db,shipment,proposal.carrier_id)
+    return shipment.search_launched and (can_receive(db,shipment,proposal.carrier_id) or public_visible(db,shipment,proposal.carrier_id))
 
 def open_dispute(db,s,q):
     proposals=db.scalars(select(SlotProposal).where(SlotProposal.shipment_id==s.id,SlotProposal.carrier_id==q.carrier_id,
@@ -1046,17 +1051,24 @@ def update_slot(db,s,day,time,related=None):
                 exclude_shipment=s.id,include_driver_accepted=True):
             invalid('В этот период водитель в отпуске или экипаж занят другим рейсом')
         resource.pickup_date,resource.pickup_time=day,time
-    # Bids at the former official slot follow the new queue unless an actual
-    # counteroffer exists or the crew has another reservation on the new date.
+    # The shipper closes the pending time proposals in this transaction. A crew
+    # offered solely at a different time must be free to submit a fresh bid.
     for bid in db.scalars(select(Offer).where(Offer.shipment_id==s.id,Offer.status.in_(['waiting_driver','driver_ok']))):
-        if bid is resource or (bid.pickup_date,bid.pickup_time)!=old or open_dispute(db,s,bid):continue
+        if bid is resource:
+            continue
+        if (bid.pickup_date,bid.pickup_time) not in (old,(day,time)):
+            bid.status='rejected'
+            continue
         last=bid.delivery_day or max(s.unload_date,bid.pickup_date)
-        if day>last or conflicts(db,bid.driver_id,bid.vehicle_id,day,bid.end_date,exclude_shipment=s.id,include_driver_accepted=True):
+        if day>min(last,bid.end_date) or conflicts(db,bid.driver_id,bid.vehicle_id,day,bid.end_date,
+                exclude_shipment=s.id,include_driver_accepted=True):
             bid.status='withdrawn'
         else:
             bid.pickup_date,bid.pickup_time=day,time
     s.slot_day,s.slot_time=day,time
     db.flush()
+    if s.status=='choice' and not db.scalar(select(Offer.id).where(Offer.shipment_id==s.id,Offer.status=='driver_ok').limit(1)):
+        s.status='search'
 
 @app.post('/api/orders/{ref}/slot')
 def propose_or_set_slot(ref:str,payload:SlotIn,request:Request,user=Depends(user_session)):
@@ -1081,7 +1093,7 @@ def propose_or_set_slot(ref:str,payload:SlotIn,request:Request,user=Depends(user
             elif role=='carrier':
                 q=db.scalar(related.where(Offer.carrier_id==actor.org_id))
                 if selected and selected.carrier_id!=actor.org_id:forbidden()
-                if not q and not (s.search_launched and can_receive(db,s,actor.org_id)):forbidden()
+                if not q and not (s.search_launched and (can_receive(db,s,actor.org_id) or public_visible(db,s,actor.org_id))):forbidden()
             else:forbidden()
         if s.status not in ('search','choice','confirmed') or s.hazardous:invalid('На этой стадии изменение подачи недоступно')
         current=official_slot(s,selected)
@@ -1722,7 +1734,10 @@ def csv_safe(value):
 def export_csv(user=Depends(user_session)):
     if user['role']!='shipper':forbidden()
     with SessionLocal() as db:
-        ships=db.scalars(select(Shipment).where(Shipment.shipper_id==user['org_id']).order_by(Shipment.pickup_date)).all()
+        ships=db.scalars(select(Shipment).outerjoin(Offer,Offer.id==Shipment.selected_offer_id)
+            .where(Shipment.shipper_id==user['org_id']).order_by(
+                func.coalesce(Shipment.slot_day,Offer.pickup_date,Shipment.pickup_date),
+                func.coalesce(Shipment.slot_time,Offer.pickup_time,Shipment.pickup_time),Shipment.id)).all()
         output=io.StringIO();w=csv.writer(output,delimiter=';')
         w.writerow(['Номер','Статус','Менеджер','Дата погрузки','Время','Дата выгрузки','Грузополучатель','Продукт','Объем, т','ЭПД','ЭТрН','Тип ТС','Способ','Перевозчик','Водитель','Откуда','Куда','Машина','Тариф, руб/т','Стоимость, руб','Адрес доставки'])
         for s in ships:

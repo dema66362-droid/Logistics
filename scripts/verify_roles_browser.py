@@ -76,6 +76,57 @@ def accept(page):
     expect(page.locator('[data-invitation-row="'+invitation_id+'"]')).to_contain_text('Принято')
     close(page)
 
+def check_public_collection(ship, carrier, driver, day):
+    """A new customer can publish self-collection and approve an external crew from its bid."""
+    ship.bring_to_front()
+    ship.get_by_role('button', name='Новая заявка', exact=False).click()
+    form = ship.locator('#newForm')
+    delivery_fields = [form.locator('[name="deliveryAddress"]'), form.locator('[name="recipientContact"]')]
+    mode = form.locator('[name="mode"]')
+    for value, required in [('Самовывоз', False), ('Доставка', True), ('Самовывоз', False)]:
+        mode.select_option(label=value)
+        for control in delivery_fields:
+            assert control.evaluate('el => el.required') is required, value
+
+    for name, value in dict(to='Склад самовывоза', pickupAddress='Учебная площадка 3', date=day,
+                            unload=day, recipient='Учебный получатель', terms='Самовывоз тары', budget='100000').items():
+        field(ship, 'newForm', name, value)
+    form.locator('[name="vehicleType"]').select_option(label='Фура')
+    form.locator('[name="publicExternal"]').check()
+    ship.get_by_role('button', name='Создать заявку', exact=True).click()
+    expect(form).to_have_count(0)
+    ship.get_by_role('button', name='Отправить заявку', exact=True).click()
+    send = ship.get_by_role('dialog', name='Отправить заявку перевозчику')
+    send.get_by_label('Искать по подходящим машинам', exact=False).check()
+    send.get_by_role('button', name='Отправить заявку', exact=True).click()
+    expect(send).to_have_count(0)
+
+    carrier.bring_to_front()
+    carrier.get_by_role('button', name='Обновить', exact=True).click()
+    carrier.locator('.d31request').filter(has_text='Склад самовывоза').locator('[data-bid]').click()
+    field(carrier, 'bidForm', 'price', '90000')
+    carrier.locator('#bidForm [name="acceptTerms"]').check()
+    carrier.get_by_role('button', name='Отправить водителю', exact=True).click()
+    expect(carrier.locator('#bidForm')).to_have_count(0)
+    driver.bring_to_front()
+    driver.get_by_role('button', name='Обновить', exact=True).click()
+    driver.locator('.d31request').filter(has_text='Склад самовывоза').locator('[data-driver-ok]').click()
+    expect(driver.locator('.d31request').filter(has_text='Склад самовывоза').locator('[data-driver-ok]')).to_have_count(0)
+    ship.bring_to_front()
+    ship.get_by_role('button', name='Обновить', exact=True).click()
+    ship.locator('.d31queue').filter(has_text='Склад самовывоза').get_by_role('button', name='Предложения').click()
+    details = ship.get_by_role('dialog', name='Карточка рейса')
+    expect(details.get_by_role('button', name='Назначить перевозчика')).to_have_count(0)
+    details.get_by_role('button', name='Добавить в пул', exact=True).click()
+    details.get_by_role('button', name='Назначить перевозчика', exact=True).click()
+    ship.get_by_role('button', name='Назначить', exact=True).click()
+    expect(ship.locator('[data-confirm]')).to_have_count(0)
+    ship.locator('.d31queue').filter(has_text='Склад самовывоза').locator('[data-dispatch="detail"]').click()
+    expect(ship.get_by_role('dialog')).to_contain_text('Перевозчик QA')
+    expect(ship.get_by_role('dialog').locator('[data-complete]')).to_be_visible()
+    close(ship)
+
+
 def run_case(playwright,engine_name,viewport,case_name):
     errors=[];pages={};contexts=[]
     with tempfile.TemporaryDirectory(prefix='logistik_roles_browser_') as tmp:
@@ -259,6 +310,9 @@ def run_case(playwright,engine_name,viewport,case_name):
             for page in (ship,carrier,driver):
                 print(json.dumps({'audio':page.evaluate('({visible:document.visibilityState,enabled:state.soundOn,engine:audioContext?.state,count:document.documentElement.dataset.soundCount,unread:state.notifications.filter(n=>!n.read).length})'),'case':case_name},ensure_ascii=False),flush=True)
                 expect(page.locator('html')).to_have_attribute('data-sound-count',re.compile('[1-9][0-9]*'))
+            external_shipper = new_page('external-shipper')
+            register(external_shipper, base, 'shipper', 'external.ship@example.test', 'Новый логист', 'Новый заказчик')
+            check_public_collection(external_shipper, carrier, driver, (trip_day+timedelta(days=8)).isoformat())
             # Removal changes the relevant pool, preserving the driver's login.
             participants(ship)
             ship.on('dialog',lambda dialog:dialog.accept())
@@ -297,7 +351,7 @@ def run_case(playwright,engine_name,viewport,case_name):
                               'employee registers by link','vehicle creation','order-driver-selection-completion','driver price privacy',
                               'customer invites driver','persistent single invitation','archive/restore invitations','private participant comments',
                               'remove driver from pool','account identity each role','audio graph and loud test tone','password recovery 3 roles',
-                              'completed order summary matches actual status','logout','no JS errors','no horizontal overflow']}
+                              'self-collection without delivery details','external carrier approval and assignment','completed order summary matches actual status','logout','no JS errors','no horizontal overflow']}
         except Exception:
             for key,page in pages.items():
                 try:
