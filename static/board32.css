@@ -1,0 +1,10 @@
+.partner32{padding:.72rem 0;border-bottom:1px solid #dce3eb}
+.partner32 summary{cursor:pointer;font-weight:600;padding:4px 0}
+.partner32 small,.partner32>b{display:block}
+.partner32 small{color:#58697c;margin:.25rem 0;font-weight:400}
+.partner32 summary small{display:inline;margin-left:.5rem}
+.partner32 .d31actions,.partner32 form{margin-top:.6rem}
+.first32{color:#ae2335;text-decoration:line-through;text-decoration-thickness:2px;margin-right:.35em;white-space:nowrap}
+[data-match-list] .d31link{display:block;margin-bottom:.25rem;text-align:left}
+[data-form32="edit"]>label{display:block;margin:.75rem 0}
+[data-form32] .split{align-items:start}
