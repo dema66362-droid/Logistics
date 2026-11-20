@@ -172,4 +172,56 @@ def test_crossed_invitations_keep_one_request_and_previous_terms_need_new_offer(
     q=create_bid(car,ref,person['id'],vid,day,time='09:00').json()['id'][2:]
     assert change(ship,ref,terms='Новые условия погрузки').status_code==200
     assert post(ship,'/api/offers/'+q+'/accept').status_code==409
-    assert create_bid(car,ref,person['id'],vid,day,time='09:00').status_code==201
+    assert create_bid(car,ref,person['id'],vid,day,time='09:00').status_code==409
+    version=next(o['termsVersion'] for o in state(car)['orders'] if o['id']==ref)
+    assert create_bid(car,ref,person['id'],vid,day,time='09:00',terms_version=version).status_code==201
+
+
+def test_copy_pending_invitation_preserves_previous_links_and_single_event(accounts):
+    ship=accounts('shipper')
+    driver=accounts('driver')
+    created=post(ship,'/api/participants/invitations',{'kind':'shipper_driver','role':'driver','email':'driver@example.test'}).json()
+    path='/api/participants/invitations/'+str(created['id'])
+    copies=[post(ship,path+'/link').json()['link'] for _ in range(2)]
+    anonymous=TestClient(c.app)
+    for url in [created['link'],*copies]:
+        assert anonymous.post('/api/participants/invitation-info',json={'token':url.split('#invite=')[1]}).status_code==200
+    assert len(driver.get('/api/partners').json()['invitations'])==1
+    assert len([n for n in state(driver)['notifications'] if n['kind']=='participant_invitation'])==1
+    assert post(driver,path+'/link').status_code==404
+    assert post(ship,path+'/cancel').status_code==200
+    assert post(ship,path+'/renew').status_code==200
+    for url in [created['link'],*copies]:
+        assert anonymous.post('/api/participants/invitation-info',json={'token':url.split('#invite=')[1]}).status_code==404
+
+
+def test_operator_initial_access_history_and_stale_decisions(accounts,monkeypatch):
+    ship=accounts('shipper');driver=accounts('driver')
+    initial=secrets.token_urlsafe(28);personal=secrets.token_urlsafe(26)
+    expiry=datetime.now(timezone.utc)+timedelta(hours=1)
+    monkeypatch.setenv('LOGISTIK_SITE_ADMIN_PASSWORD',secrets.token_urlsafe(34))
+    monkeypatch.setenv('LOGISTIK_SITE_ADMIN_SETUP_HASH',c.sha_token(initial))
+    monkeypatch.setenv('LOGISTIK_SITE_ADMIN_SETUP_UNTIL',expiry.isoformat())
+    operator=TestClient(c.app);root='/api/site-admin/'
+    form={'login':'admin','password':initial}
+    assert operator.post(root+'login',json=form).json()=={'choosePassword':True}
+    assert operator.get(root+'company',params={'inn':'0000000018'}).status_code==401
+    assert operator.post(root+'setup',json={**form,'new_password':initial}).status_code==422
+    result=operator.post(root+'setup',json={**form,'new_password':personal})
+    assert result.status_code==200
+    headers={'X-CSRF-Token':result.json()['csrf']}
+    decision={'inn':'0000000018','action':'block','expected':'active'}
+    assert operator.post(root+'company',json=decision,headers=headers).status_code==200
+    assert operator.post(root+'company',json=decision,headers=headers).status_code==409
+    assert operator.post(root+'company',json={**decision,'expected':'blocked'},headers=headers).status_code==200
+    events=operator.get(root+'history').json()
+    assert len(events)==1 and (events[0]['before'],events[0]['after'],events[0]['actor'])==('active','blocked','admin')
+    assert driver.get(root+'history').status_code==401
+    assert operator.post(root+'logout',json={},headers=headers).status_code==200
+    assert operator.get(root+'session').status_code==401
+    assert operator.post(root+'login',json=form).status_code==401
+    assert operator.post(root+'setup',json={**form,'new_password':personal}).status_code==401
+    assert operator.post(root+'login',json={'login':'admin','password':personal}).status_code==200
+    monkeypatch.setenv('LOGISTIK_SITE_ADMIN_SETUP_HASH',c.sha_token('another-initial-test'))
+    monkeypatch.setenv('LOGISTIK_SITE_ADMIN_SETUP_UNTIL',(expiry-timedelta(days=2)).isoformat())
+    assert operator.post(root+'login',json={'login':'admin','password':'another-initial-test'}).status_code==401
