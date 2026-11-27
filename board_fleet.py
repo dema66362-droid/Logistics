@@ -259,3 +259,58 @@ def recommendations(user=Depends(c.user_session)):
                 m['offeredPrice'] if m['offeredPrice'] is not None else math.inf,
                 m['emptyKm'] if m['emptyKm'] is not None else math.inf,not m['mutual'],m['days']))
         return {'items':results,'dailyKm':DAILY_KM}
+
+@router.get('/api/fleet/candidates/{ref}')
+def crew_candidates(ref:str,user=Depends(c.user_session)):
+    """Find the first feasible slot for each attached crew, including nearby later availability."""
+    cid=carrier(user)
+    with c.SessionLocal() as db:
+        s=c.get_visible_shipment(db,ref,user)
+        if s.hazardous or s.status not in ('search','choice') or not s.search_launched:return {'items':[]}
+        from route_plan import route_for,distance_book
+        from crew_board import visible_crews
+        crews=visible_crews(db,user,c.carrier_drivers(db,cid))
+        requested,_=c.official_slot(s)
+        if requested+timedelta(days=30)<c.business_today():return {'items':[]}
+        overrides=distance_book(db,cid)
+        commitments=defaultdict(list)
+        for model in (c.Offer,c.InternalTrip):
+            query=select(c.Shipment,model).join(model,model.shipment_id==c.Shipment.id).where(
+                model.carrier_id==cid,model.status.in_(['selected','driver_ok','completed']),c.Shipment.status!='cancelled',c.Shipment.id!=s.id)
+            for trip,a in db.execute(query):
+                route=route_for(trip,a,overrides)
+                finish=max(a.end_date if model==c.Offer else trip.unload_date,date.fromisoformat(route['stops'][-1]['eta'][:10]))
+                if trip.status=='completed':
+                    finish=min(finish,c.business_today())
+                commitments[a.vehicle_id].append((a.driver_id,date.fromisoformat(route['stops'][0]['eta'][:10]),finish,trip.to_city,trip.from_city))
+        positions={p.vehicle_id:p for p in db.scalars(select(c.VehiclePosition).join(c.Vehicle).where(c.Vehicle.org_id==cid))}
+        items=[]
+        for crew in crews:
+            if crew['kind']!=s.vehicle_kind or crew['capacity']<s.tons:continue
+            vehicle=crew['vehicleId'];driver=crew['driverId'];pos=positions.get(vehicle)
+            known=[(finish,city) for _,_,finish,city,_ in commitments[vehicle]]
+            if pos:known.append((pos.available,pos.city))
+            duration=max(0,(s.unload_date-requested).days)
+            for offset in range(31):
+                day=requested+timedelta(days=offset)
+                if day<c.business_today():continue
+                if c.conflicts(db,driver,vehicle,day,day+timedelta(days=duration),include_driver_accepted=True):continue
+                # A forecast can extend beyond the booked end. Keep both driver and tractor unavailable until unloading.
+                if any(begin<=day+timedelta(days=duration) and when>=day for v,rows in commitments.items()
+                       for did,begin,when,_,_ in rows if v==vehicle or did==driver):
+                    continue
+                past=[(d,city) for d,city in known if d<=day]
+                if pos and pos.available>day:continue
+                available,city=max(past) if past else (None,None)
+                km,_=distance(city,s.from_city,overrides) if city else (None,None)
+                if km is not None and available+timedelta(days=math.floor(km/DAILY_KM))>day:continue
+                next_jobs=[(begin,origin) for _,begin,_,_,origin in commitments[vehicle] if begin>day]
+                if next_jobs:
+                    next_day,next_city=min(next_jobs)
+                    next_km,_=distance(s.to_city,next_city,overrides)
+                    if next_km is not None and next_km>DAILY_KM*((next_day-day).days-duration):continue
+                items.append(dict(driverId=driver,name=crew['name'],vehicleId=vehicle,tractor=crew['tractor'],trailer=crew['trailer'],
+                    availableCity=city,availableDay=available,emptyKm=km,pickup=day,delivery=day+timedelta(days=duration),delay=offset))
+                break
+        items.sort(key=lambda v:(v['delay'],v['emptyKm'] is None,v['emptyKm'] or 0,v['name']))
+        return {'items':items}
