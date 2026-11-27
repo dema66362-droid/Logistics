@@ -18,7 +18,7 @@ const heardKey29=()=>`logistik.heard.${state.user?.id||0}`;
 function dialog29(title,content,footer=''){return `<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="modal-header"><h3>${esc(title)}</h3>${title==='Резервный код'?'':'<button class="close" data-close aria-label="Закрыть окно">×</button>'}</div>${content}${footer?`<div class="modal-footer">${footer}</div>`:''}</div></div>`}
 htop=function(title,crumb,extra=''){
  const unread=state.unreadTotal??state.notifications.filter(n=>!n.read).length,ready=audioContext?.state==='running'&&state.soundOn;
- return `<header class="top"><div><div class="breadcrumbs">Логистика / ${esc(crumb)}</div><h1>${esc(title)}</h1></div><div class="top-actions" style="flex-wrap:wrap;min-width:0"><div class="account-actions"><button class="btn small" data-account data-testid="account-badge" style="max-width:310px;min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left" aria-label="Учётная запись: ${esc(state.user?.email||'')}"><span><b>${esc(state.user?.name||'')} · ${esc(roleTitle(state.user?.role))}</b><br><small>${esc(state.user?.email||'')}</small></span></button><button class="btn small exit-button" data-logout>Выход</button></div><button class="btn small" data-sound data-sound-ready="${ready}" title="Две перегазовки дизельного двигателя">${ready?'🔊 Звук включён':state.soundOn?'🔇 Включить звук':'🔇 Звук выключен'}</button><button class="btn small" data-notices aria-label="Уведомления">🔔 ${unread?`<span class="notify-count">${unread}</span>`:''}</button><button class="btn small" data-refresh>Обновить</button><button class="btn small" data-b32="partners">Партнёры</button>${state.user.role==='driver'?'':'<button class="btn small" data-b32="staff">Сотрудники</button>'}<button class="btn small" data-b32="trash">Отменённые</button><button class="btn small" data-password>Пароль</button>${extra||''}</div></header>`;
+ return `<header class="top"><div><div class="breadcrumbs">Логистика / ${esc(crumb)}</div><h1>${esc(title)}</h1></div><div class="top-actions" style="flex-wrap:wrap;min-width:0"><div class="account-actions"><button class="btn small" data-account data-testid="account-badge" style="max-width:310px;min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left" aria-label="Учётная запись: ${esc(state.user?.email||'')}"><span><b>${esc(state.user?.name||'')} · ${esc(roleTitle(state.user?.role))}</b><br><small>${esc(state.user?.email||'')}</small></span></button><button class="btn small exit-button" data-logout>Выход</button></div><button class="btn small" data-sound data-sound-ready="${ready}" title="Две перегазовки дизельного двигателя">${ready?'🔊 Звук включён':state.soundOn?'🔇 Включить звук':'🔇 Звук выключен'}</button><button class="btn small" data-notices aria-label="Уведомления">🔔 ${unread?`<span class="notify-count">${unread}</span>`:''}</button><button class="btn small" data-refresh>Обновить</button><button class="btn small" data-b32="partners">${state.user.role==='carrier'?'Список заказчиков':'Партнёры'}</button>${state.user.role==='driver'?'':'<button class="btn small" data-b32="staff">Сотрудники</button>'}<button class="btn small" data-b32="trash">Отменённые</button><button class="btn small" data-password>Пароль</button>${extra||''}</div></header>`;
 };
 function accountModal29(){const a=account29||{};return dialog29('Учётная запись',`<div class="detail-grid"><div class="detail"><span>Имя</span><b>${esc(a.name||state.user.name)}</b></div><div class="detail"><span>Роль</span><b>${esc(roleTitle(a.role||state.user.role))}</b></div><div class="detail"><span>Почта</span><b style="overflow-wrap:anywhere">${esc(a.email||state.user.email)}</b></div><div class="detail"><span>Организация</span><b>${esc(a.organization||state.user.organizationName)}</b></div></div>${accountInn31(a)}<hr class="divider"><h3>Восстановление пароля</h3><p class="strong-note">${a.recoveryCodeReady?'Резервный код уже создан. Он показывается только при создании; при выпуске нового прежний перестанет работать.':'Сохраните резервный код сейчас. Если забудете пароль, восстановление будет доступно по почте и этому коду для любой роли.'}</p><form id="recoverySetup29"><div class="field"><label for="recoveryCurrent29">Текущий пароль для создания кода</label><input id="recoveryCurrent29" name="current_password" type="password" autocomplete="current-password" required maxlength="128"></div><button class="btn" type="submit">${a.recoveryCodeReady?'Выпустить новый резервный код':'Создать резервный код'}</button></form><hr class="divider"><h3>Звук и уведомления</h3><p class="strong-note">Звук в приложении включён по умолчанию. Для его запуска нужен один клик по странице; режим «Без звука» и громкость телефона/компьютера управляются устройством.</p><div class="field"><label for="soundVolume29">Громкость сигнала в приложении</label><input id="soundVolume29" type="range" min="0.1" max="1" step="0.1" value="${Number(state.soundVolume||1)}"></div><button class="btn" data-test-sound>Послушать двигатель</button><p class="strong-note" role="status" id="soundStatus29">${audioContext?.state==='running'?'Звуковой движок браузера готов':'Нажмите проверку звука, чтобы разрешить воспроизведение'}</p><button class="btn" data-enable-push ${config.pushEnabled?'':'disabled'}>Разрешить фоновые уведомления</button> <button class="btn" data-disable-push>Отключить на этом устройстве</button><p class="strong-note">${config.pushEnabled?'Фоновые уведомления требуют разрешения браузера. Их звук задаётся системой; на iPhone может потребоваться добавить сайт на главный экран.':'Фоновый канал ещё не настроен. Уведомления внутри сайта сохраняются в любом случае.'} Разрешённых устройств: ${Number(a.pushDevices||0)}.</p>`, '<button class="btn primary" data-close>Закрыть</button>')}
 function showRecoveryCode29(code,email=''){if(!code)return;code29=code;codeEmail29=email||state.user?.email||'';state.modal='recoveryCode';if(state.user)render();else document.getElementById('overlay').innerHTML=recoveryCodeModal29()}
@@ -107,7 +107,7 @@ if('serviceWorker'in navigator){navigator.serviceWorker.addEventListener('messag
 document.addEventListener('change',e=>{if(e.target.id==='soundVolume29'){state.soundVolume=Number(e.target.value);writeLocal29(soundKey29()+'.volume',state.soundVolume);unlockAudio29();setTimeout(()=>playSound29(true),0)}});
 document.addEventListener('click',async e=>{
  const button=e.target.closest('button');if(!button)return;
- const handled=['account','recover','ackRecovery','copyRecovery','testSound','enablePush','disablePush','archiveInvite','restoreInvite','removeOrganization','removeInvitedDriver','leaveCarrier','leaveShipper','unlinkDriver','readAllNotes','moreNotes'].find(key=>Object.hasOwn(button.dataset,key));if(!handled)return;
+ const handled=['account','recover','ackRecovery','copyRecovery','testSound','enablePush','disablePush','archiveInvite','restoreInvite','removeOrganization','removeInvitedDriver','leaveCarrier','leaveShipper','unlinkDriver','notices','readNote','noticeOrder','readAllNotes','moreNotes'].find(key=>Object.hasOwn(button.dataset,key));if(!handled)return;
  e.preventDefault();e.stopImmediatePropagation();
  try{
   if(handled==='account'){account29=await api('/api/account');state.modal='account';render()}
@@ -123,8 +123,39 @@ document.addEventListener('click',async e=>{
   if(handled==='leaveShipper'){if(!confirm('Выйти из пула этого заказчика?'))return;await api('/api/participants/shippers/'+Number(button.dataset.leaveShipper)+'/leave','POST');await refreshParticipants()}
   if(handled==='leaveCarrier'){if(!confirm('Отключиться от перевозчика? Это возможно после завершения текущих предложений и рейсов; потребуется повторный вход.'))return;await api('/api/participants/membership/leave','POST');showLogin();toast('Подключение закрыто. Войдите в личный кабинет заново.')}
   if(handled==='unlinkDriver'){if(!confirm('Отключить водителя от компании? Его личный кабинет и история сохранятся.'))return;const d=state.drivers.find(x=>x.userId===Number(button.dataset.unlinkDriver));if(!d)throw Error('Водитель уже отключён');await api('/api/carrier/drivers/'+d.id+'/unlink','POST');await loadState({fromEvent:true});await refreshParticipants()}
-  if(handled==='readAllNotes'){await api('/api/notifications/read-all','POST');extraNotes29.forEach(n=>n.read=true);await loadState();state.modal='notices';render()}
-  if(handled==='moreNotes'){const all=allNotes29();const before=all.length?Math.min(...all.map(n=>n.id)):0;const r=await api('/api/notifications?before='+before);extraNotes29.push(...r.notifications);moreNotes29=r.hasMore;render()}
+  if(['notices','readNote','noticeOrder','readAllNotes','moreNotes'].includes(handled)){
+    const generation=authGeneration,uid=state.user?.id;
+    if(!uid)return;
+    if(handled==='notices'){extraNotes29=[];moreNotes29=true;state.modal='notices';render()}
+    button.disabled=true;
+    try{
+      if(handled==='moreNotes'){
+        const before=allNotes29().at(-1)?.id||0;
+        const r=await api('/api/notifications?before='+before);
+        if(generation!==authGeneration||state.modal!=='notices')return;
+        extraNotes29.push(...r.notifications);moreNotes29=r.hasMore;
+      }
+      const ids=handled==='noticeOrder'||handled==='readNote'?[Number(button.dataset.readNote||button.dataset.noteId)]:
+        allNotes29().filter(n=>!n.read).slice(0,50).map(n=>n.id);
+      if(handled==='readAllNotes'){
+        await api('/api/notifications/read-all','POST');
+        if(generation!==authGeneration)return;
+        for(const n of [...state.notifications,...extraNotes29])n.read=true;
+        state.unreadTotal=0;
+      }else if(ids.length){
+        const response=await api('/api/notifications/read-visible','POST',{ids});
+        if(generation!==authGeneration)return;
+        for(const n of [...state.notifications,...extraNotes29])if(ids.includes(n.id))n.read=true;
+        state.unreadTotal=response.unread;
+      }
+      if(state.modal!=='notices')return;
+      if(handled==='noticeOrder'){
+        const o=getOrder(button.dataset.noticeOrder);
+        if(o){state.focus=o.id;state.day=o.date;state.modal='detail:'+o.id;}
+      }
+      render();
+    }finally{if(button.isConnected)button.disabled=false}
+  }
  }catch(err){errorToast(err)}
 },{capture:true});
 document.addEventListener('submit',async e=>{
@@ -136,5 +167,10 @@ document.addEventListener('submit',async e=>{
   else{await api('/api/participants/comments/'+encodeURIComponent(form.dataset.participantComment),'POST',{body:d.body});form.querySelector('[data-comment-status]').textContent='Сохранено';for(const list of ['partners','team','invitations','archivedInvitations','invitedDrivers','companies','roster']){for(const item of state.participants?.[list]||[]){if(item.subject===form.dataset.participantComment)item.comment=d.body}}}
  }catch(err){const target=form.querySelector('#recoverError29,[data-comment-status]');if(target)target.textContent=err.message;else errorToast(err)}finally{delete form.dataset.sending;if(submit?.isConnected)submit.disabled=false}
 },{capture:true});
-function allNotes29(){return [...new Map([...state.notifications,...extraNotes29].map(n=>[n.id,n])).values()].sort((a,b)=>b.id-a.id)}
-noticesModal=function(){const notes=allNotes29();return dialog29('Уведомления',`<p class="strong-note">Уведомления о действиях с заявкой сохраняются для всех её участников. Водители не получают коммерческие цены или чужие документы.</p>${notes.map(n=>`<div class="job"><div class="job-title">${n.read?'':'● '}${esc(n.title)}</div><div class="job-desc">${esc(n.message)}</div><div class="job-actions">${n.orderId&&getOrder(n.orderId)?`<button class="btn small" data-notice-order="${esc(n.orderId)}">Открыть заявку</button>`:''}${!n.read?`<button class="btn small" data-read-note="${n.id}">Прочитано</button>`:''}</div></div>`).join('')||'<p class="strong-note">Уведомлений пока нет.</p>'}${moreNotes29&&notes.length>=50?'<button class="btn" data-more-notes>Показать более ранние</button>':''}`, '<button class="btn" data-read-all-notes>Прочитать все</button><button class="btn primary" data-close>Закрыть</button>')};
+function allNotes29(){return [...new Map([...extraNotes29,...state.notifications].map(n=>[n.id,n])).values()].sort((a,b)=>b.id-a.id)}
+noticesModal=function(){
+ const notes=allNotes29(),remaining=state.unreadTotal||0;
+ const rows=notes.map(n=>`<article class="job"><div class="job-title">${n.read?'':'● '}${esc(n.title)}</div><div class="job-desc">${esc(n.message)}</div><div class="job-actions">${n.orderId&&getOrder(n.orderId)?`<button class="btn small" data-notice-order="${esc(n.orderId)}" data-note-id="${n.id}">Открыть заявку</button>`:''}${!n.read?`<button class="btn small" data-read-note="${n.id}">Прочитано</button>`:''}</div></article>`).join('');
+ return dialog29('Уведомления',`<div data-notification-list>${rows||'<p>Уведомлений пока нет.</p>'}${moreNotes29&&notes.length>=50?'<button class="btn" data-more-notes>Показать более ранние</button>':''}</div>`,
+ `<button class="btn" data-read-all-notes ${remaining?'':'disabled'}>Прочитать все</button><button class="btn primary" data-close>Закрыть</button>`);
+};

@@ -71,6 +71,8 @@ def restore(path: Path, *, confirm_empty: bool):
     historical_offers={row['id']:row for row in snapshot['tables']['offers']}
     for table in tables():
         columns = set(table.columns.keys())
+        if table.name in ('offers','internal_trips'):
+            for row in snapshot['tables'][table.name]:row.setdefault('route_data',None)
         if table.name == 'users':
             for row in snapshot['tables']['users']:
                 row.setdefault('surname','')

@@ -33,7 +33,10 @@ function directory32(data){
         if(p.canViewFleet)buttons+=action32('График машин','shared',p.id);
         if(state.user.role==='carrier'&&p.role==='driver'&&!p.canReceive)buttons+=button31('Подключить кабинет','rosterContact',p.id);
         return `<details class="partner32" data-partner-row="${Number(p.id)}"><summary>${esc(p.name)} <small>${esc(roleTitle(p.role||'driver'))}</small></summary>${p.inn?`<p>ИНН ${esc(p.inn)}</p>`:''}${controls32(buttons)}${participantNote29(p)}</details>`;
-    }).join('');
+    });
+    const isCarrier=state.user.role==='carrier';
+    const mainRows=rows.filter((_,i)=>!isCarrier||data.partners[i].role==='shipper').join('');
+    const otherRows=isCarrier?rows.filter((_,i)=>data.partners[i].role!=='shipper').join(''):'';
     const shown=data.invitations.filter(x=>!x.archived);
     function inviteItem(x){
         let buttons='';
@@ -43,8 +46,8 @@ function directory32(data){
         if(x.outgoing&&x.canManage&&x.status==='pending'&&x.kind==='shipper_driver')buttons+=action32('Получить ссылку','inviteLink',x.id);
         return `<div class="partner32"><b>${esc(x.name)}</b><small>${x.outgoing?'Исходящее':'Входящее'} · ${esc(label32[x.status]||x.status)}</small>${controls32(buttons)}</div>`;
     }
-    return dialog29('Партнёры',controls32(action32('Пригласить','invite','',true)+(state.user.role==='carrier'?button31('Добавить водителя','roster'):''))
-        +(rows||'<p class="d31empty">Пока нет партнёров.</p>')+`<h3>Приглашения</h3>${shown.filter(x=>x.status==='pending').map(inviteItem).join('')||'<p class="d31empty">Нет ожидающих приглашений.</p>'}
+    return dialog29(state.user.role==='carrier'?'Список заказчиков':'Партнёры',controls32(action32('Пригласить','invite','',true)+(state.user.role==='carrier'?button31('Добавить водителя','roster'):''))
+        +(mainRows||'<p class="d31empty">Список пока пуст.</p>')+(otherRows?'<details><summary>Другие связи и водители</summary>'+otherRows+'</details>':'')+`<h3>Приглашения</h3>${shown.filter(x=>x.status==='pending').map(inviteItem).join('')||'<p class="d31empty">Нет ожидающих приглашений.</p>'}
         <details class="partner32"><summary>История приглашений</summary>${data.invitations.filter(x=>x.status!=='pending'||x.archived).map(inviteItem).join('')||'История пуста.'}</details>`,
         controls32(action32('Обновить','partners')+'<button class="btn" data-close>Закрыть</button>'));
 }

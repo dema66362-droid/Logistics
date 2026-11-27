@@ -50,8 +50,8 @@ def register(page,base,role,email,name,company):
 
 def participants(page):
     page.bring_to_front()
-    page.get_by_role('button',name='Партнёры',exact=True).click()
-    expect(page.get_by_role('dialog',name='Партнёры',exact=True)).to_be_visible()
+    page.get_by_role('button',name=re.compile('^(Партнёры|Список заказчиков)$'),exact=False).click()
+    expect(page.get_by_role('dialog',name=re.compile('^(Партнёры|Список заказчиков)$'),exact=False)).to_be_visible()
 
 def close(page):
     page.get_by_role('dialog').get_by_role('button',name='Закрыть',exact=True).click()
@@ -65,7 +65,7 @@ def invite_company(page,name):
     expect(page.locator('#found32 button')).to_have_count(0)
     search.fill(name)
     page.locator('#found32 .partner32').filter(has_text=name).get_by_role('button',name='Пригласить').click()
-    expect(page.get_by_role('dialog',name='Партнёры',exact=True)).to_be_visible()
+    expect(page.get_by_role('dialog',name=re.compile('^(Партнёры|Список заказчиков)$'),exact=False)).to_be_visible()
     close(page)
 
 def accept(page):
@@ -185,7 +185,7 @@ def run_case(playwright,engine_name,viewport,case_name):
             expect(ship.locator('details summary').filter(has_text='Перевозчик QA')).to_be_visible()
             expect(ship.locator('details summary').filter(has_text='Перевозчик второй')).to_be_visible()
             close(ship)
-            carrier.get_by_role('button',name='Мои водители и машины',exact=True).click()
+            carrier.get_by_role('button',name='Транспорт',exact=True).click()
             fleet=carrier.locator('[data-dispatch-form="fleet"]')
             fleet.get_by_label('ФИО водителя').fill('Водитель QA')
             fleet.get_by_label('Госномер тягача').fill('А001АА77')
@@ -282,6 +282,7 @@ def run_case(playwright,engine_name,viewport,case_name):
             expect(driver.get_by_role('dialog')).to_contain_text('Условная выгрузка 2')
             expect(driver.get_by_role('dialog')).to_contain_text('08:45')
             close(driver)
+            driver.get_by_role('button',name='Отпуск',exact=True).click()
             driver.get_by_role('button',name='Внести отпуск',exact=True).click()
             trip_day=date.fromisoformat(day)
             leave_start=trip_day+timedelta(days=-3 if trip_day.day>3 else 1)
