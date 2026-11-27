@@ -228,6 +228,9 @@ def edit(ref:str,payload:Edit,request:Request,user=Depends(c.user_session)):
             selected.price=s.budget
         c.audit(db,db.get(c.User,user['id']),s,'slot_proposed' if pending else 'order_updated',
                 'Редактор заявки · '+user['name'])
+        if user['role']=='shipper' and not manual and s.status in ('search','choice','confirmed') and (changed_slot or unload!=old_unload):
+            from crew_board import request_slot_receipts
+            request_slot_receipts(db,s,changed_day=day!=current[0] or unload!=old_unload)
         return {'ok':True,'pendingSlot':pending,'revision':s.revision,**price_fields(s,db)}
 
 

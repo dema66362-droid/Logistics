@@ -18,7 +18,7 @@ from sqlalchemy import func, select, text
 from app import Base, db_write, engine
 
 EXCLUDED = {'web_sessions', 'login_throttles', 'push_subscriptions', 'push_deliveries', 'site_admin_sessions'}
-ADDITIVE_TABLES = {'participant_invitations','shipper_drivers','participant_comments','recovery_codes','dispatch_recipients','carrier_roster','internal_trips','slot_proposals','driver_leave','inn_restrictions','fleet_grants','driver_fleet_grants','carrier_costs','company_peers','road_distances','vehicle_positions'}
+ADDITIVE_TABLES = {'crew_preferences','participant_invitations','shipper_drivers','participant_comments','recovery_codes','dispatch_recipients','carrier_roster','internal_trips','slot_proposals','driver_leave','inn_restrictions','fleet_grants','driver_fleet_grants','carrier_costs','company_peers','road_distances','vehicle_positions'}
 
 
 def tables():
@@ -93,7 +93,15 @@ def restore(path: Path, *, confirm_empty: bool):
         if table.name=='slot_proposals':
             for row in snapshot['tables'][table.name]:row.setdefault('new_unload',None)
         if table.name=='offers':
-            for row in snapshot['tables'][table.name]:row.setdefault('delivery_day',None)
+            for row in snapshot['tables'][table.name]:
+                row.setdefault('delivery_day',None)
+                row.setdefault('slot_version',0)
+                row.setdefault('carrier_ack',False)
+                row.setdefault('driver_ack',False)
+        if table.name=='vehicles':
+            for row in snapshot['tables'][table.name]:
+                row.setdefault('tractor',None)
+                row.setdefault('trailer',None)
         if table.name == 'notifications':
             for row in snapshot['tables'][table.name]:
                 if set(row)==columns-{'event_key'}:row['event_key']=None

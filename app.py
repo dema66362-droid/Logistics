@@ -38,7 +38,7 @@ if DB_URL.startswith('postgres://'):
 # SQLAlchemy 2.1 defaults to psycopg 3; this release installs psycopg2.
 if DB_URL.startswith('postgresql://'):
     DB_URL = 'postgresql+psycopg2://' + DB_URL[len('postgresql://'):]
-VERSION = '3.2.0'
+VERSION = '3.3.2'
 BUSINESS_TZ = ZoneInfo(os.environ.get('LOGISTIK_TIMEZONE', 'Europe/Moscow'))
 
 def business_today():
@@ -223,6 +223,15 @@ class Vehicle(Base):
     kind: Mapped[str] = mapped_column(String(30))
     capacity: Mapped[Decimal] = mapped_column(Numeric(7,2))
 
+    tractor: Mapped[str | None] = mapped_column(String(20))
+    trailer: Mapped[str | None] = mapped_column(String(20))
+
+class CrewPreference(Base):
+    __tablename__ = 'crew_preferences'
+    carrier_id: Mapped[int] = mapped_column(ForeignKey('organizations.id'), primary_key=True)
+    driver_id: Mapped[int] = mapped_column(ForeignKey('drivers.id'), primary_key=True)
+    vehicle_id: Mapped[int] = mapped_column(ForeignKey('vehicles.id'))
+
 class Shipment(Base):
     __tablename__ = 'shipments'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -295,6 +304,9 @@ class Offer(Base):
     delivery_day: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default='waiting_driver')
     terms_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    slot_version: Mapped[int] = mapped_column(Integer, default=0)
+    carrier_ack: Mapped[bool] = mapped_column(Boolean, default=False)
+    driver_ack: Mapped[bool] = mapped_column(Boolean, default=False)
     accepted_terms_version: Mapped[int] = mapped_column(Integer, default=0)
     __table_args__ = (CheckConstraint('price > 0'),)
 
@@ -400,14 +412,15 @@ def initialize_schema():
             conn.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': PILOT_WRITE_LOCK})
         Base.metadata.create_all(conn)
         latest = conn.scalar(select(func.max(SchemaMigration.version)))
-        if latest and latest > '0032':
+        if latest and latest > '0033':
             raise RuntimeError('Database schema is newer than this application release')
         for table, definitions in {
             'organizations': {'inn':'VARCHAR(12)','directory_key':"VARCHAR(180) NOT NULL DEFAULT ''",'disposition':"VARCHAR(12) NOT NULL DEFAULT 'active'"},
             'users': {'surname':"VARCHAR(100) NOT NULL DEFAULT ''"},
             'slot_proposals': {'new_unload':'DATE'},
             'shipments': {'creator_id':'INTEGER','creator_name':"VARCHAR(100) NOT NULL DEFAULT ''",'revision':'INTEGER NOT NULL DEFAULT 1','first_price':'INTEGER','price_revised':'BOOLEAN NOT NULL DEFAULT 0','delete_after':'TIMESTAMP WITH TIME ZONE','slot_day':'DATE','slot_time':'VARCHAR(5)','pickup_company':"VARCHAR(160) NOT NULL DEFAULT ''",'pickup_contact':"VARCHAR(200) NOT NULL DEFAULT ''",'pickup_address':"VARCHAR(300) NOT NULL DEFAULT ''",'delivery_address':"VARCHAR(300) NOT NULL DEFAULT ''",'recipient_contact':"VARCHAR(200) NOT NULL DEFAULT ''",'terms':"TEXT NOT NULL DEFAULT ''",'terms_version':'INTEGER NOT NULL DEFAULT 1','public_external':'BOOLEAN NOT NULL DEFAULT 0','search_launched':'BOOLEAN NOT NULL DEFAULT 0','tariff_source':"VARCHAR(30) NOT NULL DEFAULT 'manual'"},
-            'offers': {'delivery_day':'DATE','terms_accepted':'BOOLEAN NOT NULL DEFAULT 0','accepted_terms_version':'INTEGER NOT NULL DEFAULT 0'},
+            'vehicles': {'tractor':'VARCHAR(20)','trailer':'VARCHAR(20)'},
+            'offers': {'slot_version':'INTEGER NOT NULL DEFAULT 0','carrier_ack':'BOOLEAN NOT NULL DEFAULT 0','driver_ack':'BOOLEAN NOT NULL DEFAULT 0','delivery_day':'DATE','terms_accepted':'BOOLEAN NOT NULL DEFAULT 0','accepted_terms_version':'INTEGER NOT NULL DEFAULT 0'},
             'participant_invitations': {'sender_archived':'BOOLEAN NOT NULL DEFAULT 0','recipient_archived':'BOOLEAN NOT NULL DEFAULT 0'},
             'dispatch_recipients': {'declined':'BOOLEAN NOT NULL DEFAULT 0','review_seen':'BOOLEAN NOT NULL DEFAULT 0'},
             'carrier_roster': {'share_busy':'BOOLEAN NOT NULL DEFAULT 0'},
@@ -460,6 +473,8 @@ def initialize_schema():
             conn.execute(text("""UPDATE shipments SET price_revised=TRUE WHERE selected_offer_id IS NOT NULL
                 AND first_price<>(SELECT price FROM offers WHERE id=shipments.selected_offer_id)"""))
             conn.execute(SchemaMigration.__table__.insert().values(version='0032',applied_at=datetime.now(timezone.utc)))
+        if not conn.scalar(select(SchemaMigration.version).where(SchemaMigration.version=='0033')):
+            conn.execute(SchemaMigration.__table__.insert().values(version='0033', applied_at=datetime.now(timezone.utc)))
         conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_shipments_delete_after ON shipments(delete_after)')
         conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_org_directory_inn ON organizations(inn)')
         conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_notes_order_kind ON notifications(shipment_id,kind)')
@@ -794,7 +809,10 @@ def sanitize_for_role(item:dict, role:str, *, external:bool=False, assigned:bool
     return item
 
 def offer_dict(o: Offer, db: Session):
-    return {'id':f'Q-{o.id}','orderId':db.get(Shipment,o.shipment_id).ref,
+    vehicle=db.get(Vehicle,o.vehicle_id)
+    return {'tractor':vehicle.tractor,'trailer':vehicle.trailer,'slotVersion':o.slot_version,
+            'carrierAck':o.carrier_ack,'driverAck':o.driver_ack,'driverConnected':bool(db.get(Driver,o.driver_id).user_id),
+            'id':f'Q-{o.id}','orderId':db.get(Shipment,o.shipment_id).ref,
             'carrier':db.get(Organization,o.carrier_id).name,'carrierId':o.carrier_id,
             'driver':db.get(Driver,o.driver_id).name,'car':db.get(Vehicle,o.vehicle_id).label,
             'driverId':o.driver_id,'vehicleId':o.vehicle_id,'price':o.price,'pickup':o.pickup_time,
@@ -899,12 +917,13 @@ def dashboard_state(user,period=None):
                     'status':'declined' if r.declined else 'review_seen' if r.review_seen else 'review_delivered' if s.hazardous else 'delivered'} for r in db.scalars(select(DispatchRecipient).where(DispatchRecipient.shipment_id==s.id))]
             result.append(item)
         notes=db.scalars(select(Notification).where(Notification.user_id==user['id']).order_by(Notification.id.desc()).limit(50)).all()
+        from crew_board import visible_crews
         current_org=db.get(Organization,user['org_id'])
         return {'user':{**{k:v for k,v in user.items() if k!='csrf'},
                         'organizationName':current_org.name if current_org else ''},'csrf':user['csrf'],
-                'orders':result, 'offers':[({**offer_dict(o,db), 'price':0} if user['role']=='driver' else offer_dict(o,db)) for o in offers],
+                'crews':visible_crews(db,user,drivers), 'orders':result, 'offers':[({**offer_dict(o,db), 'price':0} if user['role']=='driver' else offer_dict(o,db)) for o in offers],
                 'drivers':[{'id':d.id,'name':d.name,'userId':d.user_id} for d in drivers],
-                'vehicles':[{'id':v.id,'label':v.label,'kind':v.kind,'capacity':float(v.capacity)} for v in vehicles],
+                'vehicles':[{'id':v.id,'label':v.label,'kind':v.kind,'capacity':float(v.capacity),'tractor':v.tractor,'trailer':v.trailer} for v in vehicles],
                 'notifications':[{'id':n.id,'kind':n.kind,'title':n.title,'message':n.message,'read':n.read,'orderId':db.get(Shipment,n.shipment_id).ref if n.shipment_id else None} for n in notes],
                 'unreadNotifications':db.scalar(select(func.count()).select_from(Notification).where(Notification.user_id==user['id'],Notification.read.is_(False))) or 0,
                 'day':business_today().isoformat()}
@@ -1210,9 +1229,15 @@ def propose_or_set_slot(ref:str,payload:SlotIn,request:Request,user=Depends(user
             return {'ok':True,'changed':bool(own or adjust)}
 
         if role=='shipper':
+            from board_orders import update_unload
+            # Move the full trip window, including the reserved return leg.
+            delivery=(selected.delivery_day if selected else None) or s.unload_date
+            update_unload(db,s,delivery+(payload.day-current[0]),payload.day)
             update_slot(db,s,payload.day,payload.time)
             db.execute(update(SlotProposal).where(SlotProposal.shipment_id==s.id,SlotProposal.status=='pending').values(status='superseded'))
             audit(db,actor,s,'slot_changed',f'{payload.day} {payload.time}')
+            from crew_board import request_slot_receipts
+            request_slot_receipts(db,s,changed_day=payload.day!=current[0])
             return {'ok':True,'changed':True}
         deadline=(q.delivery_day or max(s.unload_date,q.pickup_date)) if q else s.unload_date
         if not business_today()<=payload.day<=deadline:invalid('Дата подачи выходит за период рейса',422)
@@ -1248,6 +1273,9 @@ def decide_slot(ref:str,proposal_id:int,payload:SlotDecision,request:Request,use
         item.status=target
         audit(db,db.get(User,user['id']),s,'slot_accepted' if payload.accepted else 'slot_rejected',
               f'{item.day} {item.time} · {item.id}')
+        if payload.accepted:
+            from crew_board import request_slot_receipts
+            request_slot_receipts(db,s,changed_day=False)
         return {'ok':True}
 
 class LeaveIn(BaseModel):
@@ -1321,13 +1349,18 @@ def conflicts(db:Session, driver_id:int, vehicle_id:int, start:date, end:date,
               exclude_shipment:int|None=None, *, include_driver_accepted:bool=False):
     if db.scalar(select(DriverLeave.id).where(DriverLeave.driver_id==driver_id,DriverLeave.start<=end,DriverLeave.end>=start).limit(1)):
         return True
+    vehicle=db.get(Vehicle,vehicle_id) if vehicle_id>0 else None
+    same_vehicles=[vehicle_id]
+    if vehicle and vehicle.tractor and vehicle.trailer:
+        same_vehicles=list(db.scalars(select(Vehicle.id).where(
+            (Vehicle.tractor==vehicle.tractor) | (Vehicle.trailer==vehicle.trailer))))
     manual=select(InternalTrip.shipment_id).join(Shipment,Shipment.id==InternalTrip.shipment_id).where(
-        InternalTrip.status=='selected',(InternalTrip.driver_id==driver_id)|(InternalTrip.vehicle_id==vehicle_id),
+        InternalTrip.status=='selected',(InternalTrip.driver_id==driver_id)|(InternalTrip.vehicle_id.in_(same_vehicles)),
         Shipment.pickup_date<=end,Shipment.unload_date>=start)
     stages=['selected','driver_ok'] if include_driver_accepted else ['selected']
     booked=select(Offer.id).join(Shipment,Shipment.id==Offer.shipment_id).where(
         Offer.status.in_(stages),Shipment.status.notin_(['cancelled','completed']),
-        (Offer.driver_id==driver_id)|(Offer.vehicle_id==vehicle_id),Offer.pickup_date<=end,Offer.end_date>=start)
+        (Offer.driver_id==driver_id)|(Offer.vehicle_id.in_(same_vehicles)),Offer.pickup_date<=end,Offer.end_date>=start)
     if exclude_shipment:
         manual=manual.where(InternalTrip.shipment_id!=exclude_shipment)
         booked=booked.where(Offer.shipment_id!=exclude_shipment)
@@ -1367,13 +1400,15 @@ def create_offer(payload:CreateOffer,request:Request,user=Depends(user_session))
         if d.user_id:note_user(db,d.user_id,s.id,'crew_reserved','Рейс в вашем графике',f'{s.ref} · Подал перевозчик. Подтверждение не требуется.')
         q.status='driver_ok';s.status='choice'
         db.flush()
-        if allowed(db,s,q.carrier_id) and q.price==s.budget and s.budget>0 and (q.pickup_date,q.pickup_time)==official_slot(s) and not open_dispute(db,s,q):
-            assign_offer(db,q,s,db.get(User,user['id']),'auto_assigned')
+        note_org(db,s.shipper_id,'shipper',s.id,'offer_ready','Перевозчик подтвердил готовность',
+                 f'{s.ref} · {d.name} · {v.label}. Подтвердите перевозку в карточке.')
         result=offer_dict(q,db)
     return result
 
 def assign_offer(db:Session, q:Offer, s:Shipment, actor:User, action:str):
     if s.status not in ('search','choice') or s.selected_offer_id is not None: invalid('Заявка уже назначена')
+    if q.slot_version and not (q.carrier_ack and q.driver_ack):
+        invalid('Перенос ещё не подтверждён перевозчиком и водителем')
     if q.status!='driver_ok':invalid('Перевозчик не зарезервировал экипаж')
     if (q.pickup_date,q.pickup_time)!=official_slot(s) or open_dispute(db,s,q):
         invalid('Сначала согласуйте встречное время в очереди заказчика')
@@ -1429,11 +1464,7 @@ def driver_response(offer_id:int,accepted:bool,request:Request,user=Depends(user
         audit(db,db.get(User,user['id']),s,'driver_ok' if accepted else 'driver_declined',f'offer={q.id}')
         note_org(db,q.carrier_id,'carrier',s.id,'driver_ok' if accepted else 'driver_declined',
                  'Ответ водителя',f'{s.ref}: водитель {"подтвердил" if accepted else "отклонил"} рейс')
-        if (accepted and allowed(db,s,q.carrier_id) and q.price==s.budget and s.budget>0
-                and (q.pickup_date,q.pickup_time)==official_slot(s) and not open_dispute(db,s,q)):
-            # First confirmed driver wins at the published price, under a single DB transaction.
-            assign_offer(db,q,s,db.get(User,user['id']),'auto_assigned')
-        elif accepted:
+        if accepted:
             note_org(db,s.shipper_id,'shipper',s.id,'offer_ready','Новое предложение',f'Поступило подтверждённое предложение по {s.ref}')
     return {'ok':True}
 
@@ -1801,6 +1832,9 @@ def complete_order(ref:str,request:Request,user=Depends(user_session)):
     with db_write() as db:
         s=get_visible_shipment(db,ref,user)
         if s.status!='confirmed' or s.hazardous:invalid('Завершение доступно для подтверждённых тестовых перевозок')
+        selected=db.get(Offer,s.selected_offer_id) if s.selected_offer_id else None
+        if selected and selected.slot_version and not (selected.carrier_ack and selected.driver_ack):
+            invalid('Сначала согласуйте перенос рейса')
         s.status='completed'
         audit(db,db.get(User,user['id']),s,'completed')
     return {'ok':True}
@@ -1912,6 +1946,10 @@ def bind_roster_driver(db:Session,member:RosterMember,driver:Driver):
     for trip in db.scalars(select(InternalTrip).where(InternalTrip.driver_id==placeholder.id)):
         trip.driver_id=driver.id
         if trip.status in ('waiting_driver','selected'):note_user(db,driver.user_id,trip.shipment_id,'crew_reserved','График обновлён','Рейс доступен в вашем календаре')
+    pref=db.get(CrewPreference,(member.carrier_id,placeholder.id))
+    if pref:
+        db.merge(CrewPreference(carrier_id=member.carrier_id,driver_id=driver.id,vehicle_id=pref.vehicle_id))
+        db.delete(pref)
     member.driver_id=driver.id
     db.flush()
     db.delete(placeholder)
@@ -2443,7 +2481,8 @@ def period_plan(start:date,end:date,user:dict):
             if not order or q['driverId']!=driver['id'] or q['status'] not in ('waiting_driver','driver_ok','selected') or order['status']=='cancelled':continue
             if order['date']>days[-1] or max(order['date'],q['endDate'])<days[0]:continue
             calendar_offer={**q,'day':order['date'],'pickup':order['time'],'bidDay':q['day'],'bidTime':q['pickup']}
-            jobs.append({'offer':calendar_offer,'order':order,'canReceive':bool(driver['userId']),'confirmed':q['status']=='selected'})
+            jobs.append({'offer':calendar_offer,'order':order,'canReceive':bool(driver['userId']),'confirmed':q['status']=='selected' and
+                         (not q['slotVersion'] or (q['carrierAck'] and q['driverAck']))})
         for record in orders.values():
             if record.get('internalDriverId')!=driver['id'] or record['unload']<days[0] or record['date']>days[-1]:continue
             if record['privateStage'] not in ('waiting_driver','selected','completed'):continue
@@ -2679,5 +2718,6 @@ from board_orders import router as orders32
 from board_partners import router as partners32
 from board_fleet import router as fleet32
 from board_admin import router as admin32
-for router in (orders32,partners32,fleet32,admin32):
+from crew_board import router as crews
+for router in (orders32,partners32,fleet32,admin32,crews):
     app.include_router(router)
