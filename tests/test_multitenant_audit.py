@@ -196,6 +196,7 @@ def test_revoke_one_shipper_preserves_confirmed_trip_and_other_shipper_link():
     assert q.status_code==201,q.text
     id=int(q.json()['id'][2:])
     assert post(driver,d1,f'/api/offers/{id}/driver-response?accepted=true').status_code==200
+    assert post(ship2,s2,f'/api/offers/{id}/accept').status_code==200
     assigned=next(x for x in ship2.get('/api/state').json()['orders'] if x['id']==ref)
     assert assigned['status']=='confirmed'
     # Shipper B revokes carrier A; carrier retains own assigned trip, but cannot see new closed jobs.

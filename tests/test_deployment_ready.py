@@ -97,6 +97,8 @@ q1=post(c1,"/api/offers",{"order_ref":ref,"driver_id":1,"vehicle_id":1,"day":sta
 assert q1.status_code==201,q1.text
 id1=int(q1.json()["id"].removeprefix("Q-"))
 assert post(d1,f"/api/offers/{id1}/driver-response?accepted=true").status_code==200
+assert ship.get("/api/state").json()["orders"][0]["status"]=="choice"
+assert post(ship,f"/api/offers/{id1}/accept").status_code==200
 assert ship.get("/api/state").json()["orders"][0]["status"]=="confirmed"
 assert d1.get("/api/state").json()["orders"][0]["deliveryAddress"].startswith("Условная")
 assert d1.get("/api/state").json()["orders"][0]["budget"]==0
