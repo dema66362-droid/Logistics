@@ -61,12 +61,12 @@ def login(form:Credentials,request:Request,response:Response):
         db.execute(delete(c.AdminSession).where(c.AdminSession.expires<=now))
         db.add(c.AdminSession(token_hash=c.sha_token(token),csrf=csrf,expires=now+timedelta(hours=2),credential_tag=credential_tag(secret)))
     response.set_cookie(COOKIE,token,path=COOKIE_PATH,httponly=True,samesite='strict',secure=os.getenv('LOGISTIK_SECURE_COOKIE')=='1',max_age=7200)
-    return {'csrf':csrf}
+    return {'csrf':csrf,'login':form.login}
 
 
 @router.get('/api/site-admin/session')
 def session(auth=Depends(operator)):
-    return {'csrf':auth}
+    return {'csrf':auth,'login':os.getenv('LOGISTIK_SITE_ADMIN_LOGIN','admin')}
 
 
 @router.post('/api/site-admin/logout')

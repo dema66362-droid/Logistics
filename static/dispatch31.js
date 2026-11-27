@@ -40,7 +40,11 @@ function slotStatus31(o,decisions=false) {
     if(!o.slotProposals?.length)return '';
     return `<section class="slotDispute" aria-label="Согласование времени"><b>Требуется согласование времени</b><small>В очереди · ${shortDate31(o.date)} в ${esc(o.time)}</small>${o.slotProposals.map(p=>`<div><span>${esc(roleTitle(p.role))} · ${esc(p.name)} · <b>${shortDate31(p.day)} в ${esc(p.time)}</b></span>${decisions?`<div class="d31actions">${button31('Согласовать и поставить в очередь','approveSlot',o.id+'/'+p.id,true)}${button31('Оставить прежнее время','rejectSlot',o.id+'/'+p.id)}</div>`:''}</div>`).join('')}</section>`;
 }
+function pendingDate(q){
+    return !!q?.slotVersion && !(q.carrierAck && q.driverAck);
+}
 function orderStage31(o){
+    if(['choice','confirmed'].includes(o.status)&&state.offers.some(q=>q.orderId===o.id&&['driver_ok','selected'].includes(q.status)&&pendingDate(q)))return 'Перенос на согласовании';
     if(o.internal)return stageNames31[o.privateStage]||'Закрыт';
     if(!['search','choice'].includes(o.status))return statuses[o.status]?.[0]||o.status;
     if(o.reviewOnly)return 'На проверке допуска';
@@ -59,7 +63,7 @@ function queueRows31(rows) {
     if(fullColumns31 && rows.length){
         return `<div class="d31scroll"><table class="d31wide"><thead><tr><th>№ очереди</th>${tableFields31(rows[0]).map(([k])=>`<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>${rows.map((o,i)=>`<tr><td>${i+1}</td>${tableFields31(o).map(([k,v],j)=>`<td>${j===0?button31(v,'detail',v):k==='Стоимость перевозки'?price32(o):esc(v||'—')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
     }
-    return rows.map((o,i)=>`<article class="d31queue"><div class="d31num">${i+1}</div><div class="d31time ${o.slotProposals?.length?'attention':''}">${esc(o.time)}</div><div class="d31route"><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${esc(o.recipient)} · выгрузка ${shortDate31(o.unload)}</small></div><div class="d31crew">${esc(o.car||'Машина не назначена')}<small>Перевозчик · ${esc(carrierName32(o))}</small><small>${esc(o.driver||'')} ${price32(o)}</small><small>Создал · ${esc(o.author||'—')}</small></div><div class="d31actions">${(!o.searchLaunched&&!o.reviewOnly&&o.status==='search')?button31(o.hazardous?'Запросить проверку':'Отправить заявку','send',o.id,true):''}${o.status==='choice'?button31('Предложения','choose',o.id):''}</div>${slotStatus31(o,true)}</article>`).join('');
+    return rows.map((o,i)=>`<article class="d31queue"><div class="d31num">${i+1}</div><div class="d31time ${o.slotProposals?.length?'attention':''}">${esc(o.time)}</div><div class="d31route"><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${esc(o.recipient)} · выгрузка ${shortDate31(o.unload)}</small></div><div class="d31crew">${esc(o.car||'Машина не назначена')}<small>Перевозчик · ${esc(carrierName32(o))}</small><small>${esc(o.driver||'')} ${price32(o)}</small><small>${esc(orderStage31(o))}</small></div><div class="d31actions">${(!o.searchLaunched&&!o.reviewOnly&&o.status==='search')?button31(o.hazardous?'Запросить проверку':'Отправить заявку','send',o.id,true):''}${o.status==='choice'?button31('Предложения','choose',o.id):''}</div>${slotStatus31(o,true)}</article>`).join('');
 }
 function shipperSchedule31(title){
     const dates=weekDates(),groups=dates.map(day=>{
@@ -85,8 +89,8 @@ allOffers=function(){
 function dateOnJob31(j,d){return d>=j.offer.day&&d<=j.offer.endDate}
 function scheduleRow31(j) {
     const o=j.order,q=j.offer;
-    const stage=o.status==='completed'?'Завершён':stageNames31[q.status]||q.status;
-    return `<div class="d31job"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.pickupCompany||o.shipperName||'Погрузка')} → ${shortDate31(q.deliveryDay||o.unload)} · ${esc(o.recipient||'Выгрузка')}</small><small>Заказчик · ${esc(o.shipperName||'—')} &nbsp; Перевозчик · ${esc(q.carrier||o.carrier||'—')} &nbsp; ${esc(q.car||o.car||'')}</small></div><span class="pill ${q.status==='selected'?'green':'amber'}">${esc(stage)}</span></div>`;
+    const stage=o.status==='completed'?'Завершён':pendingDate(q)?'Перенос на согласовании':stageNames31[q.status]||q.status;
+    return `<div class="d31job"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.pickupCompany||o.shipperName||'Погрузка')} → ${shortDate31(q.deliveryDay||o.unload)} · ${esc(o.recipient||'Выгрузка')}</small><small>Заказчик · ${esc(o.shipperName||'—')} &nbsp; Перевозчик · ${esc(q.carrier||o.carrier||'—')} &nbsp; ${esc(q.car||o.car||'')}</small></div><span class="pill ${j.confirmed?'green':'amber'}">${esc(stage)}</span></div>`;
 }
 function presentMonth31(data) {
     const row=data.drivers[0]||{jobs:[],leave:[]},dates=data.dates;
@@ -110,7 +114,7 @@ function carrierBoard31(data){
     return `<section class="panel d31panel">${periodBar31(weekTitle(),'week')}<div class="section-head"><h2>График водителей</h2>${detailDriver31?button31('Все водители','allDrivers'):''}</div><div class="d31scroll"><table class="d31board"><thead><tr><th>Водитель</th>${dates.map((d,i)=>`<th>${weekNames31[i]}<small>${shortDate31(d)}</small></th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr><th><button class="d31link" data-dispatch="oneDriver" data-id="${row.driver.id}">${esc(row.driver.name)}</button><small>${row.driver.userId?'':'Кабинет не подключён'}</small></th>${dates.map(d=>{
         const jobs=row.jobs.filter(j=>dateOnJob31(j,d));
         const leave=row.leave?.some(l=>l.start<=d&&d<=l.end);
-        return `<td>${jobs.map(j=>`<button class="d31boardtrip ${j.confirmed?'booked':'pending'}" data-dispatch="detail" data-id="${esc(j.order.id)}"><b>${esc(j.order.from)} → ${esc(j.order.to)}</b><small>${shortDate31(j.order.date)} ${esc(j.order.time)} → ${shortDate31(j.offer.deliveryDay)}<br>${esc(j.order.shipperName)}<br>${esc(j.offer.car||j.order.car||'')} · ${esc(stageNames31[j.offer.status])}</small></button>`).join('')||`<small>${leave?'Отпуск':row.busyOutside.includes(d)?'Занят':row.externalAvailabilityKnown?'Свободен':'Нет рейса у вас'}</small>`}</td>`;
+        return `<td>${jobs.map(j=>`<button class="d31boardtrip ${j.confirmed?'booked':'pending'}" data-dispatch="detail" data-id="${esc(j.order.id)}"><b>${esc(j.order.from)} → ${esc(j.order.to)}</b><small>${shortDate31(j.order.date)} ${esc(j.order.time)} → ${shortDate31(j.offer.deliveryDay)}<br>${esc(j.order.shipperName)}<br>${esc(j.offer.car||j.order.car||'')} · ${esc(pendingDate(j.offer)?'Перенос на согласовании':stageNames31[j.offer.status])}</small></button>`).join('')||`<small>${leave?'Отпуск':row.busyOutside.includes(d)?'Занят':row.externalAvailabilityKnown?'Свободен':'Нет рейса у вас'}</small>`}</td>`;
     }).join('')}</tr>`).join('')}</tbody></table></div>${!rows.length?'<p class="d31empty">Добавьте своего водителя, чтобы открыть его график.</p>':''}</section>
     ${detailDriver31&&rows[0]?`<section class="panel d31panel"><div class="section-head"><h2>${esc(rows[0].driver.name)}</h2>${button31('Запланировать рейс','manual',detailDriver31,true)}</div>${rows[0].jobs.map(scheduleRow31).join('')||'<p class="d31empty">На эту неделю рейсов нет.</p>'}</section>`:''}`;
 }
@@ -136,11 +140,11 @@ function planPanel31(){
     }
     return `<div data-period-plan aria-live="polite">${cache.data?(month?presentMonth31(cache.data):carrierBoard31(cache.data)):'<p class="d31empty">Загрузка графика…</p>'}</div>`;
 }
-driver=()=>htop('Кабинет водителя','Водитель',button31('＋ Отпуск','leave'))+`<div class="d31">${planPanel31()}</div>`;
+driver=()=>htop('Кабинет водителя','Водитель',button31('＋ Отпуск','leave'))+`<div class="d31">${driverProfile()}${planPanel31()}</div>`;
 carrier=function(){
     const inbox=state.orders.filter(o=>!o.internal&&['search','choice'].includes(o.status)&&!state.offers.some(q=>q.orderId===o.id&&['waiting_driver','driver_ok','selected'].includes(q.status)));
-    const toolbar='<button class="btn" data-add-driver>＋ Водитель</button> <button class="btn" data-add-vehicle>＋ Машина</button> '+button31('Запланировать рейс','manual','',true);
-    return htop('Кабинет перевозчика','Перевозчик',toolbar)+`<div class="d31">${planPanel31()}<section class="panel d31panel"><h2>Входящие заявки · ${inbox.length}</h2>${inbox.map(o=>`<article class="d31request"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.shipperName||'Заказчик')} · ${esc(o.product)} · ${fmt(o.tons)} т</small></div><div class="d31actions">${o.reviewOnly?button31('Подтвердить получение','reviewSeen',o.id):`<button class="btn primary small" data-bid="${esc(o.id)}">Предложить машину</button>${button31('Предложить время','slot',o.id)}`}${o.addressed?button31('Отклонить','declineIncoming',o.id):''}</div>${slotStatus31(o)}</article>`).join('')||'<p class="d31empty">Новых заявок нет.</p>'}</section>${recommendPanel32()}</div>`;
+    const toolbar=button31('Мои водители и машины','fleet')+' '+button31('Запланировать рейс','manual','',true);
+    return htop('Кабинет перевозчика','Перевозчик',toolbar)+`<div class="d31">${planPanel31()}<section class="panel d31panel"><h2>Входящие заявки · ${inbox.length}</h2>${inbox.map(o=>`<article class="d31request"><div><button class="d31link" data-dispatch="detail" data-id="${esc(o.id)}">${esc(o.from)} → ${esc(o.to)}</button><small>${shortDate31(o.date)} ${esc(o.time)} · ${esc(o.shipperName||'Заказчик')} · ${esc(o.product)} · ${fmt(o.tons)} т</small></div><div class="d31actions">${o.reviewOnly?button31('Подтвердить получение','reviewSeen',o.id):`<button class="btn primary small" data-bid="${esc(o.id)}">Назначить экипаж</button>${button31('Предложить время','slot',o.id)}`}${o.addressed?button31('Отклонить','declineIncoming',o.id):''}</div>${slotStatus31(o)}</article>`).join('')||'<p class="d31empty">Новых заявок нет.</p>'}</section>${recommendPanel32()}</div>`;
 };
 function accountInn31(account) {
     if(state.user?.role==='driver')return '';
@@ -159,7 +163,7 @@ function details31(ref){
     const fields=[...(role==='shipper'?[]:[['Заказчик',o.shipperName]]),['Создал',o.author],['Подача по очереди',shortDate31(o.date)+' в '+o.time],['Город погрузки',o.from],['Грузоотправитель',o.pickupCompany],['Адрес погрузки',o.pickupAddress],['Контакт на погрузке',o.pickupContact],['Выгрузка',shortDate31(o.unload)],['Город выгрузки',o.to],['Грузополучатель',o.recipient],['Адрес выгрузки',o.deliveryAddress],['Контакт на выгрузке',o.recipientContact],['Продукт',o.product],['Объём, т',o.tons],['Автомобиль',o.car],['Водитель',o.driver],['Перевозчик',carrierName32(o)],['Требования',o.terms]];
     if(role!=='driver')fields.push(['Менеджер',o.manager],['Номер ЭПД',o.epd],['Номер ЭТрН',o.etrn],['Тариф за тонну',o.rate?rub(o.rate):''],['Комментарий',o.note]);
     let actions='';
-    if(!o.internal&&alive&&!o.hazardous)actions+=button31(role==='shipper'?'Изменить время подачи':'Предложить время','slot',ref);
+    if(!o.internal&&alive&&!o.hazardous)actions+=button31(role==='shipper'?'Перенести дату или время':'Предложить время','slot',ref);
     if(role==='shipper'){
         if(o.status==='search'&&!o.searchLaunched&&!o.reviewOnly)actions+=button31(o.hazardous?'Запросить проверку':'Отправить заявку','send',ref,true);
         if(o.status==='confirmed')actions+=`<button class="btn small primary" data-complete="${esc(ref)}">Завершить рейс</button>`;
@@ -167,15 +171,20 @@ function details31(ref){
         if(role==='carrier'&&o.privateStage==='selected')actions+=button31('Завершить рейс','internalComplete',ref,true);
     } else if(role==='carrier'){
         if(o.reviewOnly)actions+=button31('Подтвердить получение','reviewSeen',ref);
-        else if(['search','choice'].includes(o.status)&&!my.some(q=>['waiting_driver','driver_ok','selected'].includes(q.status)))actions+=`<button class="btn small primary" data-bid="${esc(ref)}">Предложить машину</button>`;
+        else if(['search','choice'].includes(o.status)&&!my.some(q=>['waiting_driver','driver_ok','selected'].includes(q.status)))actions+=`<button class="btn small primary" data-bid="${esc(ref)}">Назначить экипаж</button>`;
     }
     if(o.canEdit && o.status!=='cancelled')actions+=action32('Редактировать','edit',ref)+action32('Отмена заявки','cancel',ref);
     const offers=my.filter(q=>['waiting_driver','driver_ok','selected'].includes(q.status)).map(q=>{
         let buttons='';
         if(q.status==='driver_ok'&&role==='shipper'){
             if(!q.approved)buttons+=`<button class="btn small" data-approve-carrier="${esc(q.carrierId)}" title="Предложить партнёрство">Пригласить перевозчика</button>`;
-            else if(q.day===o.date&&q.pickup===o.time&&!o.slotProposals?.some(p=>p.offerId===Number(q.id.slice(2))||p.carrierId===q.carrierId))buttons+=`<button class="btn small primary" data-select-quote="${esc(q.id)}">Назначить перевозчика</button>`;
+            else if(!pendingDate(q)&&q.day===o.date&&q.pickup===o.time&&!o.slotProposals?.some(p=>p.offerId===Number(q.id.slice(2))||p.carrierId===q.carrierId))buttons+=`<button class="btn small primary" data-select-quote="${esc(q.id)}">Подтвердить перевозку</button>`;
             buttons+=`<button class="btn small" data-reject-quote="${esc(q.id)}">Отклонить предложение</button>`;
+        }
+        if(q.slotVersion){
+            const mine=role==='carrier'?!q.carrierAck:role==='driver'?!q.driverAck:false;
+            buttons+=`<div class="receipt-status">Перенос · перевозчик: ${q.carrierAck?'подтвердил':'ожидается ответ'} · водитель: ${q.driverAck?'подтвердил':q.driverConnected?'ожидается ответ':'кабинет не подключён'}</div>`;
+            if(mine && alive)buttons+=button31('Подтвердить новую дату','confirmDate',q.id.slice(2)+'/'+q.slotVersion,true);
         }
         if(role==='carrier'&&q.status!=='selected')buttons+=`<button class="btn small" data-withdraw-quote="${esc(q.id)}">Отозвать предложение</button>`;
         return `<div class="job"><b>${esc(q.carrier)} · ${esc(q.driver)} · ${esc(q.car)}</b><small>${esc(stageNames31[q.status])}${role==='driver'?'':' · '+rub(q.price)}</small><div class="d31actions">${buttons}</div></div>`;
@@ -195,13 +204,14 @@ function openDispatch(kind,id=''){
 function dispatchDialog() {
     const f=form31,o=getOrder(f.ref);
     if(f.owner!==state.user.id)return '';
+    if(f.kind==='fleet')return crewDirectory(f);
     if(f.kind==='leave')return formDialog31('Отпуск водителя','leave',field31('Первый день','start',{type:'date',value:state.day<state.businessDay?state.businessDay:state.day})+field31('Последний день включительно','end',{type:'date',value:state.day<state.businessDay?state.businessDay:state.day}),'Сохранить отпуск');
     if(f.kind==='roster')return formDialog31('Добавить своего водителя','roster',field31('Фамилия, имя','name',{extra:'maxlength="100"'})+field31('Почта кабинета водителя','email',{type:'email',required:false})+'<p class="strong-note">Водитель сразу появится в графике. Почту можно добавить позже. Для получения заявок водителю нужен личный кабинет.</p>','Добавить водителя');
     if(f.kind==='rosterContact')return formDialog31('Подключить кабинет водителя','rosterContact',field31('Почта личного кабинета','email',{type:'email'}),'Сохранить почту');
     if(f.kind==='slot'&&o){
         const mine=state.user.role==='driver'?state.offers.filter(q=>q.orderId===o.id&&['waiting_driver','driver_ok','selected'].includes(q.status)):[];
         const select=mine.length?'<label class="field">Перевозчик<select name="offer">'+mine.map(q=>`<option value="${esc(q.id.slice(2))}">${esc(q.carrier)} · ${esc(q.car)}</option>`).join('')+'</select></label>':'';
-        return formDialog31(state.user.role==='shipper'?'Время подачи':'Предложить другое время','slot',select+`<p>В очереди · ${localeDay(f.day)} в ${esc(f.time)}</p>`+field31('Дата подачи','day',{type:'date',value:f.day})+field31('Время подачи','time',{type:'time',value:f.time}),state.user.role==='shipper'?'Поставить в очередь':'Отправить заказчику');
+        return formDialog31(state.user.role==='shipper'?'Время подачи':'Предложить другое время','slot',select+`<p>В очереди · ${localeDay(f.day)} в ${esc(f.time)}</p>`+field31('Дата подачи','day',{type:'date',value:f.day})+field31('Время подачи','time',{type:'time',value:f.time}),state.user.role==='shipper'?'Сохранить перенос':'Отправить заказчику');
     }
     if(f.kind==='send'&&o){
         const options=(state.participants?.partners||[]).filter(p=>p.role==='carrier');
@@ -231,7 +241,7 @@ document.addEventListener('click',async e=>{
             const p=await api('/api/participants');if(state.user?.id!==uid)return;
             state.participants=p;openDispatch(action,id);return;
         }
-        if(['leave','slot','roster','rosterContact','manual'].includes(action)){openDispatch(action,id);return;}
+        if(['fleet','leave','slot','roster','rosterContact','manual'].includes(action)){openDispatch(action,id);return;}
         if(action==='columns'){fullColumns31=!fullColumns31;render();return;}
         if(action==='shipDay'||action==='clearDay'){dayFilter31=action==='clearDay'||dayFilter31===id?'':id;render();return;}
         if(action==='driverDay'){state.day=id;render();return;}
@@ -242,7 +252,10 @@ document.addEventListener('click',async e=>{
         if(action==='refresh'){await loadState();return;}
         if(btn.disabled)return;btn.disabled=true;
         const path='/api/orders/'+encodeURIComponent(id);
-        if(action==='approveSlot'||action==='rejectSlot'){
+        if(action==='confirmDate'){
+            const [offer,version]=id.split('/');
+            await api('/api/offers/'+Number(offer)+'/confirm-date','POST',{version:Number(version)});
+        } else if(action==='approveSlot'||action==='rejectSlot'){
             const [ref,proposal]=id.split('/');
             const pending=getOrder(ref)?.slotProposals?.find(p=>p.id===Number(proposal));
             await api('/api/orders/'+encodeURIComponent(ref)+'/slot/'+Number(proposal),'POST',{accepted:action==='approveSlot'});
@@ -279,6 +292,13 @@ document.addEventListener('submit',async e=>{
             await api('/api/account/inn','POST',{inn:d.inn});account29=await api('/api/account');render();toast('ИНН сохранён');return;
         }
         if(f.owner!==state.user?.id)return;
+        if(kind==='fleet'){
+            await api('/api/carrier/crew','POST',{driver_id:Number(d.driver_id)||null,name:d.name||'',
+                tractor:d.tractor,trailer:d.trailer,kind:d.kind,capacity:d.capacity,legacy_vehicle:Number(d.legacy)||null});
+            await loadState({fromEvent:true});
+            if(state.user?.id===f.owner){state.modal=f.ref?'bid:'+f.ref:'dispatch:fleet';render();toast('Экипаж сохранён')}
+            return;
+        }
         if(kind==='slot'){
             await api('/api/orders/'+encodeURIComponent(f.ref)+'/slot','POST',{day:d.day,time:d.time,expected_day:f.day,expected_time:f.time,offer_id:d.offer?Number(d.offer):null});
             if(state.user.role==='shipper'){state.day=d.day;dayFilter31=''}
@@ -330,3 +350,54 @@ loadState=async function(options={}){
 };
 const originalSignOut31=showLogin;
 showLogin=function(){form31={};planCache31.request++;planCache31.key='';planCache31.data=null;detailDriver31=0;dayFilter31='';fullColumns31=false;originalSignOut31()};
+
+function driverProfile(){
+    const person=state.drivers[0];
+    const rows=state.crews.map(c=>`<li><b>Тягач ${esc(c.tractor)} · Прицеп ${esc(c.trailer)}</b><small>${esc(c.company)}</small></li>`);
+    return `<section class="panel d31panel"><h2>${esc(person?.name||state.user.name)}</h2>${rows.length?`<ul class="crew-list">${rows.join('')}</ul>`:'<p>Перевозчик ещё не закрепил тягач и прицеп.</p>'}</section>`;
+}
+
+function crewDirectory(form){
+    const people=state.drivers.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('');
+    const old=state.vehicles.filter(v=>!v.tractor&&!v.trailer);
+    const rows=state.drivers.map(d=>{
+        const crew=state.crews.find(c=>c.driverId===d.id);
+        return `<li><b>${esc(d.name)}</b><small>${crew?'Тягач '+esc(crew.tractor)+' · Прицеп '+esc(crew.trailer):'Техника не закреплена'}${d.userId?'':' · Кабинет не подключён'}</small>${!d.userId?button31('Подключить кабинет','rosterContact',d.id):''}</li>`;
+    });
+    return formDialog31('Мои водители и машины','fleet',
+        (rows.length?`<ul class="crew-list">${rows.join('')}</ul>`:'')+
+        `<label class="field">Карточка водителя<select name="driver_id"><option value="">Новый водитель</option>${people}</select></label>`+
+        field31('ФИО водителя','name',{extra:'minlength="2" maxlength="100"'})+
+        (old.length?`<label class="field">Машина из прежнего справочника<select name="legacy"><option value="">Новая или ранее зарегистрированная сцепка</option>${old.map(v=>`<option value="${v.id}">${esc(v.label)}</option>`).join('')}</select></label>`:'')+
+        '<div class="split">'+field31('Госномер тягача','tractor',{extra:'maxlength="20"'})+
+        field31('Госномер прицепа','trailer',{extra:'maxlength="20"'})+
+        '<label class="field">Тип транспорта<select name="kind"><option>Автоцистерна</option><option>Фура</option></select></label>'+
+        field31('Грузоподъёмность, т','capacity',{type:'number',extra:'min="0.01" max="120" step=".01"'})+'</div>',
+        'Сохранить экипаж');
+}
+
+document.addEventListener('change',e=>{
+    const input=e.target, form=input.form;
+    if(form?.matches('[data-dispatch-form="fleet"]')){
+        const f=form.elements;
+        if(input.name==='driver_id'){
+            const driver=state.drivers.find(d=>d.id===Number(input.value));
+            const crew=state.crews.find(c=>c.driverId===driver?.id);
+            f.name.value=driver?.name||'';f.name.readOnly=!!driver;
+            f.tractor.value=crew?.tractor||'';f.trailer.value=crew?.trailer||'';
+            f.kind.value=crew?.kind||'Автоцистерна';f.capacity.value=crew?.capacity||'';
+            if(f.legacy)f.legacy.value='';
+        }else if(input.name==='legacy'){
+            const vehicle=state.vehicles.find(v=>v.id===Number(input.value));
+            if(vehicle){f.kind.value=vehicle.kind;f.capacity.value=vehicle.capacity}
+        }
+    }
+    if(form?.id==='bidForm' && input.name==='driver'){
+        const crew=state.crews.find(c=>c.driverId===Number(input.value));
+        const selector=form.elements.vehicle;
+        selector.value=crew?String(crew.vehicleId):'';
+        const msg=form.querySelector('[data-bid-crew]');
+        msg.textContent=selector.selectedIndex>0?'Закреплённая техника подставлена.':
+            'Выберите подходящую сцепку. Перевозчик может закрепить её в разделе «Мои водители и машины».';
+    }
+});
